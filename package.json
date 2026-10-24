@@ -1,0 +1,44 @@
+{
+  "name": "dwc-health-tracker",
+  "version": "1.0.0",
+  "description": "Self-hosted workout, diet and body-composition tracker",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "packageManager": "npm",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.135.0",
+    "@vinext/cloudflare": "^1.1.1",
+    "barcode-detector": "3.2.2",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-server-dom-webpack": "^19.3.1",
+    "vinext": "^1.2.1"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^2.0.0-beta.v.1",
+    "@tailwindcss/postcss": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "^6.1.2",
+    "@vitejs/plugin-rsc": "^0.5.38",
+    "cf": "^1.0.0-beta.18",
+    "tailwindcss": "latest",
+    "typescript": "latest",
+    "vite": "^8.3.0",
+    "vitest": "^3.2.4"
+  },
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "deploy": "vinext-cloudflare deploy",
+    "dev:node": "vite dev --mode node",
+    "build:node": "node scripts/build-node.mjs",
+    "start": "vinext start",
+    "test": "vitest run"
+  }
+}

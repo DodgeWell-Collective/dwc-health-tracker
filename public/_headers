@@ -1,0 +1,6 @@
+# Replaces vinext's generated rule (it only writes one when this file is missing).
+# Its "immutable, 1 year" header also landed on 404/503 replies for chunks during a
+# deploy, so browsers kept the failure and every tap fell back to a full page reload.
+# Revalidating is cheap (a 304 per chunk, only on full loads) and never sticks an error.
+/_next/static/*
+  Cache-Control: public, max-age=0, must-revalidate

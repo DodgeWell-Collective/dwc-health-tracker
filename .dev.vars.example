@@ -1,0 +1,7 @@
+# Copy to .dev.vars for local development. Never commit the real file.
+# Optional: enables "describe it to Claude" and recipe ideas; hidden when empty.
+ANTHROPIC_API_KEY=
+# Optional: free key from https://api.data.gov/signup (otherwise the rate-limited DEMO_KEY).
+USDA_API_KEY=
+# Optional: require this password to sign in. Leave empty when something else guards the site.
+APP_PASSWORD=
