@@ -38,7 +38,7 @@
     "deploy": "vinext-cloudflare deploy",
     "dev:node": "vite dev --mode node",
     "build:node": "node scripts/build-node.mjs",
-    "start": "vinext start",
+    "start": "node --disable-warning=ExperimentalWarning node_modules/vinext/dist/cli.js start",
     "test": "vitest run"
   }
 }

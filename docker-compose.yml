@@ -1,0 +1,12 @@
+# docker compose up -d   → http://localhost:3000
+# Set APP_PASSWORD in .env first (copy .env.example). Your data is saved in ./data.
+services:
+  app:
+    build: .
+    image: dwc-health-tracker
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file: .env
+    volumes:
+      - ./data:/app/data
