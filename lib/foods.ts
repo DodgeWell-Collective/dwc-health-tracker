@@ -1,4 +1,4 @@
-import { env } from "cloudflare:workers";
+import { apiKey } from "./secrets";
 
 /**
  * Nutrition lookup from real databases. All macros are computed from these
@@ -14,9 +14,9 @@ export type { FoodHit, Macros, Portion };
 
 const UA = "dwc-health-tracker/1.0 (personal tracker; github.com/DodgeWell-Collective/dwc-health-tracker)";
 
-function usdaKey() {
+async function usdaKey() {
   // DEMO_KEY works but is heavily rate-limited; a free key comes from api.data.gov/signup.
-  return (env as unknown as { USDA_API_KEY?: string }).USDA_API_KEY || "DEMO_KEY";
+  return (await apiKey("usda_api_key")) || "DEMO_KEY";
 }
 
 /** Cache identical lookups at Cloudflare's edge for a day. */
@@ -65,7 +65,7 @@ function titleCase(s: string) {
 
 async function searchUsda(query: string): Promise<FoodHit[]> {
   const url = new URL("https://api.nal.usda.gov/fdc/v1/foods/search");
-  url.searchParams.set("api_key", usdaKey());
+  url.searchParams.set("api_key", await usdaKey());
   url.searchParams.set("query", query);
   url.searchParams.set("dataType", "Foundation,SR Legacy,Branded");
   url.searchParams.set("pageSize", "25");
@@ -97,7 +97,7 @@ async function searchUsda(query: string): Promise<FoodHit[]> {
 export async function foodPortions(fdcId: number): Promise<Portion[]> {
   const f = await getJson<{
     foodPortions?: { amount?: number; modifier?: string; portionDescription?: string; gramWeight?: number; measureUnit?: { name?: string } }[];
-  }>(`https://api.nal.usda.gov/fdc/v1/food/${fdcId}?api_key=${usdaKey()}`);
+  }>(`https://api.nal.usda.gov/fdc/v1/food/${fdcId}?api_key=${await usdaKey()}`);
   return (f.foodPortions ?? [])
     .filter((p) => p.gramWeight && p.gramWeight > 0)
     .map((p) => {

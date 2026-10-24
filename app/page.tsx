@@ -322,7 +322,7 @@ export default async function Today({ searchParams }: { searchParams: Promise<{ 
             defaultSlot={defaultSlot}
             frequent={frequent}
             recipes={recipes.map((r) => ({ id: r.id, name: r.name, calories: r.calories }))}
-            claude={claudeEnabled()}
+            claude={await claudeEnabled()}
           />
         </div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

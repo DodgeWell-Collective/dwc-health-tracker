@@ -1,16 +1,43 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { appPassword, SESSION_COOKIE, sameToken, sessionToken } from "./lib/auth";
+import { authOff, SESSION_COOKIE, validSession } from "./lib/auth";
 
-/** Sends every request without a valid session to /login when APP_PASSWORD is set. */
+// Everything needs a session except the sign-in page and the sign-in POST itself.
+// Checked per request, not by path pattern alone: server actions can be posted to any
+// page URL, so a public page must not accept them.
 export async function proxy(request: NextRequest) {
-  const password = appPassword();
-  if (!password) return NextResponse.next();
-  const cookie = request.cookies.get(SESSION_COOKIE)?.value ?? "";
-  if (cookie && sameToken(cookie, await sessionToken(password))) return NextResponse.next();
-  return NextResponse.redirect(new URL("/login", request.url));
+  const { pathname } = request.nextUrl;
+  const method = request.method;
+  const open =
+    authOff() ||
+    (pathname === "/login" && (method === "GET" || method === "HEAD")) ||
+    (pathname === "/auth/login" && method === "POST" && (await isPlainSignIn(request)));
+  if (!open && !(await validSession(request.cookies.get(SESSION_COOKIE)?.value))) {
+    return withHeaders(NextResponse.redirect(new URL("/login", request.url), 303));
+  }
+  return withHeaders(NextResponse.next());
+}
+
+/**
+ * The sign-in form's own POST: a small url-encoded body with no server-action markers.
+ * vinext runs server actions before route handlers, on any path, so a request carrying
+ * an action id must not get through here without a session.
+ */
+async function isPlainSignIn(request: NextRequest) {
+  if (request.headers.has("next-action")) return false;
+  if (!request.headers.get("content-type")?.startsWith("application/x-www-form-urlencoded")) return false;
+  const body = await request.clone().text();
+  return body.length < 1024 && !/(\$|%24)ACTION/i.test(body);
+}
+
+/** No framing by other sites, no content-type guessing, no full URLs sent to other sites. */
+function withHeaders(res: NextResponse) {
+  res.headers.set("X-Frame-Options", "DENY");
+  res.headers.set("X-Content-Type-Options", "nosniff");
+  res.headers.set("Referrer-Policy", "same-origin");
+  return res;
 }
 
 export const config = {
-  // The login page and the files it needs (styles, icons, manifest) stay public.
-  matcher: ["/((?!login|_next/static|pwa/).*)"],
+  // Static files the sign-in page needs (scripts, styles, icons, manifest).
+  matcher: ["/((?!_next/static|pwa/).*)"],
 };

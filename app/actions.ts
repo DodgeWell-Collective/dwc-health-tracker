@@ -68,7 +68,7 @@ export async function describeFood(_prev: ParseState, fd: FormData): Promise<Par
   try {
     return { result: await parseFoods(description, localTime, saved), description };
   } catch (e) {
-    if (e instanceof ClaudeNotConfigured) return { error: "Claude isn't set up yet: add an ANTHROPIC_API_KEY secret.", description };
+    if (e instanceof ClaudeNotConfigured) return { error: "Claude isn't set up yet: add an Anthropic API key in Settings.", description };
     console.error("describeFood failed", e);
     return { error: e instanceof Error ? e.message : "Something went wrong talking to Claude.", description };
   }
@@ -478,7 +478,7 @@ export async function suggestRecipesAction(_prev: SuggestState, fd: FormData): P
     });
     return { recipes };
   } catch (e) {
-    if (e instanceof ClaudeNotConfigured) return { error: "Claude isn't set up yet: add an ANTHROPIC_API_KEY secret." };
+    if (e instanceof ClaudeNotConfigured) return { error: "Claude isn't set up yet: add an Anthropic API key in Settings." };
     console.error("suggestRecipes failed", e);
     return { error: e instanceof Error ? e.message : "Something went wrong talking to Claude." };
   }

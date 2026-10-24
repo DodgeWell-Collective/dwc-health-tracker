@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { env } from "cloudflare:workers";
+import { apiKey } from "./secrets";
 import { SLOTS, type Aisle, type Ingredient, type Slot } from "./types";
 
 export interface ParsedFood {
@@ -64,8 +64,8 @@ const RECORD_FOODS: Anthropic.Beta.BetaTool = {
 export class ClaudeNotConfigured extends Error {}
 
 /** Claude features are optional; without a key the app hides them. */
-export function claudeEnabled() {
-  return Boolean((env as unknown as { ANTHROPIC_API_KEY?: string }).ANTHROPIC_API_KEY);
+export async function claudeEnabled() {
+  return Boolean(await apiKey("anthropic_api_key"));
 }
 
 /**
@@ -73,9 +73,9 @@ export function claudeEnabled() {
  * Web search runs server-side; a long search can return pause_turn, which we resume.
  */
 async function callForTool(opts: { system: string; prompt: string; tool: Anthropic.Beta.BetaTool; webSearch: boolean; maxTokens?: number }) {
-  const apiKey = (env as unknown as { ANTHROPIC_API_KEY?: string }).ANTHROPIC_API_KEY;
-  if (!apiKey) throw new ClaudeNotConfigured("ANTHROPIC_API_KEY is not set");
-  const client = new Anthropic({ apiKey });
+  const key = await apiKey("anthropic_api_key");
+  if (!key) throw new ClaudeNotConfigured("No Anthropic API key is set");
+  const client = new Anthropic({ apiKey: key });
   const tools: Anthropic.Beta.BetaToolUnion[] = opts.webSearch
     ? [{ type: "web_search_20260209", name: "web_search", max_uses: 5 }, opts.tool]
     : [opts.tool];

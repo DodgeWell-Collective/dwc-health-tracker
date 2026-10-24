@@ -3,8 +3,11 @@ import { redirect } from "next/navigation";
 import { getTargets, getToday, tripFor } from "../../lib/data";
 import { addDays, formatDate } from "../../lib/dates";
 import { suggestedTargets, type GoalPace, type Measured } from "../../lib/nutrition";
-import { AutoSave, Card, Info } from "../../components/ui";
+import { AutoSave, Button, Card, Info } from "../../components/ui";
 import { saveProfile } from "../actions";
+import { authOff, MIN_PASSWORD } from "../../lib/auth";
+import { getSecret, setting } from "../../lib/secrets";
+import { changePassword, removeApiKey, saveApiKey } from "./account-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -13,12 +16,13 @@ const TIMEZONES = ["America/New_York", "America/Chicago", "America/Denver", "Ame
 const TABS = [
   ["profile", "Profile"],
   ["food", "Food & shopping"],
+  ["account", "Sign-in & keys"],
 ] as const;
 
 const short = (d: string) => formatDate(d, { month: "short", day: "numeric", year: "numeric" });
 
-export default async function Settings({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
-  const { tab: requested } = await searchParams;
+export default async function Settings({ searchParams }: { searchParams: Promise<{ tab?: string; pw?: string; key?: string }> }) {
+  const { tab: requested, pw, key } = await searchParams;
   if (requested === "training") redirect("/train"); // training moved to its own page
   const tab = TABS.some(([t]) => t === requested) ? requested! : "profile";
   const today = await getToday();
@@ -42,6 +46,7 @@ export default async function Settings({ searchParams }: { searchParams: Promise
 
       {tab === "profile" && <ProfileTab p={p} weight={weight?.weight_lb ?? null} pace={pace} measured={measured} today={today} />}
       {tab === "food" && <FoodTab p={p} today={today} />}
+      {tab === "account" && <AccountTab pw={pw} keyStatus={key} />}
     </div>
   );
 }
@@ -167,5 +172,70 @@ function Field({ label, children }: { label: React.ReactNode; children: React.Re
       <span className="text-zinc-500">{label}</span>
       {children}
     </label>
+  );
+}
+
+const PW_MESSAGES: Record<string, [string, boolean]> = {
+  ok: ["Password changed. Other devices will need to sign in again.", true],
+  wrong: ["Current password is wrong.", false],
+  short: [`Use at least ${MIN_PASSWORD} characters.`, false],
+  mismatch: ["The new passwords don't match.", false],
+  locked: ["Too many tries. Wait 15 minutes.", false],
+};
+
+const API_KEYS = [
+  { name: "anthropic", secret: "anthropic_api_key", env: "ANTHROPIC_API_KEY", label: "Anthropic", help: "Turns on describing meals to Claude and recipe ideas. Get a key at console.anthropic.com." },
+  { name: "usda", secret: "usda_api_key", env: "USDA_API_KEY", label: "USDA", help: "Raises food search limits. Free key from api.data.gov/signup." },
+] as const;
+
+async function AccountTab({ pw, keyStatus }: { pw?: string; keyStatus?: string }) {
+  const msg = pw ? PW_MESSAGES[pw] : undefined;
+  const keys = await Promise.all(API_KEYS.map(async (k) => ({ ...k, saved: await getSecret(k.secret), server: Boolean(setting(k.env)) })));
+  return (
+    <>
+      {!authOff() && (
+        <Card title="Password">
+          <form action={changePassword} className="grid gap-2 sm:max-w-xs">
+            <input name="current" type="password" autoComplete="current-password" placeholder="Current password" required aria-label="Current password" />
+            <input name="next" type="password" autoComplete="new-password" placeholder="New password" minLength={MIN_PASSWORD} required aria-label="New password" />
+            <input name="confirm" type="password" autoComplete="new-password" placeholder="New password again" minLength={MIN_PASSWORD} required aria-label="New password again" />
+            {msg && <p className={`text-sm ${msg[1] ? "text-emerald-600" : "text-amber-600"}`}>{msg[0]}</p>}
+            <Button>Change password</Button>
+          </form>
+          <form action="/auth/logout" method="post" className="mt-3">
+            <button className="text-sm text-zinc-500 underline">Sign out</button>
+          </form>
+        </Card>
+      )}
+      <Card title={<>API keys<Info>Keys are stored on your server and never shown again in full. A key saved here is used instead of one set on the server.</Info></>}>
+        <div className="space-y-4">
+          {keys.map((k) => (
+            <div key={k.name}>
+              <div className="mb-1 flex items-baseline justify-between gap-2 text-sm">
+                <span className="font-medium">{k.label}<Info>{k.help}</Info></span>
+                <span className="text-xs text-zinc-500">
+                  {k.saved ? `Saved, ends in ${k.saved.slice(-4)}` : k.server ? "Set on the server" : "Not set"}
+                </span>
+              </div>
+              <div className="flex gap-2">
+                <form action={saveApiKey} className="flex min-w-0 flex-1 gap-2">
+                  <input type="hidden" name="name" value={k.name} />
+                  <input name="value" type="password" autoComplete="off" placeholder={k.saved ? "Replace key" : "Paste key"} className="min-w-0 flex-1" required aria-label={`${k.label} API key`} />
+                  <Button variant="ghost">Save</Button>
+                </form>
+                {k.saved && (
+                  <form action={removeApiKey}>
+                    <input type="hidden" name="name" value={k.name} />
+                    <Button variant="danger">Remove</Button>
+                  </form>
+                )}
+              </div>
+            </div>
+          ))}
+          {keyStatus === "saved" && <p className="text-sm text-emerald-600">Key saved.</p>}
+          {keyStatus === "bad" && <p className="text-sm text-amber-600">Anthropic didn&apos;t accept that key. Check it and try again.</p>}
+        </div>
+      </Card>
+    </>
   );
 }

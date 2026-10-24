@@ -23,7 +23,7 @@ export default async function Recipes() {
         <RecipeBuilder knownIngredients={knownIngredients} />
       </Card>
 
-      {claudeEnabled() && (
+      {(await claudeEnabled()) && (
         <details className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
           <summary className="cursor-pointer text-sm font-semibold">Ideas from Claude <span className="font-normal text-zinc-500">(AI)</span></summary>
           <div className="mt-3">

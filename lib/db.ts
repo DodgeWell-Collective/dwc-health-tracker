@@ -114,6 +114,12 @@ const SCHEMA = [
     value REAL NOT NULL,
     PRIMARY KEY (date, kind)
   )`,
+  // Password hash, session key and API keys entered in Settings (lib/secrets.ts).
+  // Left out of the data download and backups.
+  `CREATE TABLE IF NOT EXISTS app_secret (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  )`,
   // Items added to a trip's shopping list by hand (on top of the meal plan's ingredients).
   `CREATE TABLE IF NOT EXISTS shopping_extra (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

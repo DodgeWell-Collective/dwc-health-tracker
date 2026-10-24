@@ -1,7 +1,8 @@
 # Copy to .dev.vars for local development. Never commit the real file.
-# Optional: enables "describe it to Claude" and recipe ideas; hidden when empty.
-ANTHROPIC_API_KEY=
-# Optional: free key from https://api.data.gov/signup (otherwise the rate-limited DEMO_KEY).
-USDA_API_KEY=
-# Optional: require this password to sign in. Leave empty when something else guards the site.
+# The first sign-in password; change it later in Settings.
 APP_PASSWORD=
+# "off" skips sign-in (only when something else guards the app).
+APP_AUTH=
+# Optional, or enter them in Settings: Claude features, and higher USDA search limits.
+ANTHROPIC_API_KEY=
+USDA_API_KEY=

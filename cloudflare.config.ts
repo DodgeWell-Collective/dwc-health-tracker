@@ -19,7 +19,7 @@ export default defineConfig({
       ASSETS: bindings.assets(),
       // Secrets: set with `npx wrangler secret put <NAME> --name dwc-health-tracker`
       // or in the dashboard (Worker → Settings → Variables and Secrets).
-      // The sign-in password. Set it: without it anyone with the URL can see your data.
+      // The first sign-in password; the app stays locked until it is set. Change it later in Settings.
       APP_PASSWORD: bindings.secret(),
       // Optional: enables "describe it to Claude" and recipe ideas.
       ANTHROPIC_API_KEY: bindings.secret(),
