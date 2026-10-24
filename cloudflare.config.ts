@@ -24,13 +24,13 @@ export default defineConfig({
     },
     env: {
       ASSETS: bindings.assets(),
-      // Secrets: set with `npx wrangler secret put <NAME> --name <worker name>`
-      // or in the dashboard (Worker → Settings → Variables and Secrets).
-      // The first sign-in password; the app stays locked until it is set. Change it later in Settings.
-      APP_PASSWORD: bindings.secret(),
-      // Optional (or enter them in Settings): Claude features, and higher USDA search limits.
-      ANTHROPIC_API_KEY: bindings.secret(),
-      USDA_API_KEY: bindings.secret(),
+      // Secrets aren't declared here: a declared secret is required, which would fail the first
+      // deploy before you've had a chance to set it. Set them after deploying, with
+      // `npx wrangler secret put <NAME> --name <worker name>` or in the dashboard
+      // (Worker → Settings → Variables and Secrets):
+      //   APP_PASSWORD       the first sign-in password; the app stays locked until it is set
+      //   ANTHROPIC_API_KEY  optional, or enter it in Settings: Claude features
+      //   USDA_API_KEY       optional, or enter it in Settings: higher USDA search limits
       // "off" only when something else, such as Cloudflare Access, guards the domain.
       ...(local.appAuth === "off" ? { APP_AUTH: bindings.text("off") } : {}),
       // Created on first deploy, unless cloudflare.local.json names an existing database.
