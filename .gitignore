@@ -15,3 +15,7 @@ next-env.d.ts
 .DS_Store
 Thumbs.db
 *.log
+# Your own deployment: personal Cloudflare details, deploy script and backup worker.
+cloudflare.local.json
+deploy.ps1
+backup/

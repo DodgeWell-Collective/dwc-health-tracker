@@ -51,7 +51,9 @@ npm run deploy
 npx wrangler secret put APP_PASSWORD --name dwc-health-tracker
 ```
 
-The first deploy creates the database and prints your URL (`dwc-health-tracker.<your-subdomain>.workers.dev`). The app stays locked until `APP_PASSWORD` is set. To use your own domain, see the comment in `cloudflare.config.ts`.
+The first deploy creates the database and prints your URL (`dwc-health-tracker.<your-subdomain>.workers.dev`). The app stays locked until `APP_PASSWORD` is set.
+
+To use your own domain, an existing D1 database or a different Worker name, copy `cloudflare.local.example.json` to `cloudflare.local.json` and fill it in. Git ignores that file, so your details stay out of the repo. Set `"appAuth": "off"` only if Cloudflare Access already guards the domain.
 
 ### Option 3: Node
 
