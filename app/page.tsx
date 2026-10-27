@@ -9,7 +9,7 @@ import { getPlan, slotBudgets } from "../lib/planner";
 import { goalRisks } from "../lib/risk";
 import { SLOTS, type FoodLog, type Recipe, type SetLog, type Slot, type WorkoutExercise } from "../lib/types";
 import { Bar, Button, Card, fmt, Hidden, Info, Removable, Ring } from "../components/ui";
-import { LogFood, type QuickFood } from "../components/log-food";
+import { JumpToLog, LogFood, type QuickFood } from "../components/log-food";
 import { dedupeFoods } from "../lib/food-match";
 import { RestTimer } from "../components/rest-timer";
 import { PendingLink } from "../components/pending-link";
@@ -53,7 +53,7 @@ export default async function Today({ searchParams }: { searchParams: Promise<{ 
 
   const names = exercises.map((e) => e.exercise.toLowerCase());
   const trip = tripFor(profile, today);
-  const [history, bests, recipes, logged, setup, risks, bought] = await Promise.all([
+  const [history, bests, recipes, logged, setup, risks, bought, previous] = await Promise.all([
     // Recent earlier sessions per exercise → today's prescribed weight (lib/loads.ts).
     all<{ exercise: string; date: string; weight_lb: number; reps: number; rir: number | null }>(
       "SELECT exercise, date, weight_lb, reps, rir FROM set_log WHERE date < ? AND date >= ? ORDER BY date, id",
@@ -84,6 +84,13 @@ export default async function Today({ searchParams }: { searchParams: Promise<{ 
       `SELECT f.name, f.calories, f.protein, f.carbs, f.fat, f.fiber, f.sugar, f.sodium FROM shopping_extra e
        JOIN saved_food f ON f.id = e.food_id WHERE e.trip_start >= ? GROUP BY f.id ORDER BY MAX(e.id) DESC LIMIT 8`,
       addDays(trip.start, -trip.days),
+    ),
+    // Each meal's most recent earlier day in the last two weeks, for "Repeat" in one tap.
+    all<{ slot: Slot; date: string; calories: number; items: string }>(
+      `SELECT f.slot, f.date, SUM(f.calories) AS calories, GROUP_CONCAT(f.name, ' · ') AS items FROM food_log f
+       JOIN (SELECT slot, MAX(date) AS d FROM food_log WHERE date < ? AND date >= ? GROUP BY slot) l ON l.slot = f.slot AND l.d = f.date
+       GROUP BY f.slot`,
+      date, addDays(date, -14),
     ),
   ]);
   // Bought items first, then what you log most; no duplicates.
@@ -315,12 +322,15 @@ export default async function Today({ searchParams }: { searchParams: Promise<{ 
         </Card>
       </div>
 
+      <JumpToLog />
       <Card title="Meals" action={<Link href="/plan" className="text-sm text-emerald-600">Plan →</Link>}>
-        <div className="mb-4">
+        <div id="log" className="mb-4 scroll-mt-[calc(1rem+env(safe-area-inset-top))]">
           <LogFood
             date={date}
             defaultSlot={defaultSlot}
             frequent={frequent}
+            // Only for meals not logged yet that day.
+            previous={previous.filter((p) => !food.some((f) => f.slot === p.slot))}
             recipes={recipes.map((r) => ({ id: r.id, name: r.name, calories: r.calories }))}
             claude={await claudeEnabled()}
           />

@@ -97,7 +97,40 @@ export async function logFoods(fd: FormData) {
           opt(i.fiber), opt(i.sugar), opt(i.sodium),
         ),
     );
-  if (rows.length) await db.batch(rows);
+  const ids = rows.length ? insertedIds(await db.batch(rows)) : [];
+  done();
+  return ids;
+}
+
+const insertedIds = (results: { meta?: { last_row_id?: number } }[]) =>
+  results.map((r) => Number(r.meta?.last_row_id)).filter((id) => id > 0);
+
+/** Logs the same foods eaten at this meal on an earlier day. */
+export async function repeatMeal(fd: FormData) {
+  const d = date(fd);
+  const s = slot(fd);
+  const from = str(fd, "from");
+  if (!isDate(from)) throw new Error("Invalid date");
+  const items = await all<{ id: number }>("SELECT id FROM food_log WHERE date = ? AND slot = ? ORDER BY id", from, s);
+  const db = await getDb();
+  const rows = items.map((i) =>
+    db
+      .prepare(
+        `INSERT INTO food_log (date, slot, name, calories, protein, carbs, fat, fiber, sugar, sodium, recipe_id)
+         SELECT ?, slot, name, calories, protein, carbs, fat, fiber, sugar, sodium, recipe_id FROM food_log WHERE id = ?`,
+      )
+      .bind(d, i.id),
+  );
+  const ids = rows.length ? insertedIds(await db.batch(rows)) : [];
+  done();
+  return ids;
+}
+
+/** Takes back entries just logged (the Undo after adding). */
+export async function undoLog(ids: number[]) {
+  const valid = ids.filter((id) => Number.isInteger(id) && id > 0).slice(0, 50);
+  if (!valid.length) return;
+  await run(`DELETE FROM food_log WHERE id IN (${valid.map(() => "?").join(",")})`, ...valid);
   done();
 }
 
@@ -507,11 +540,12 @@ export async function logRecipe(fd: FormData) {
   const r = await first<Recipe>("SELECT * FROM recipe WHERE id = ?", num(fd, "recipe_id"));
   const k = Math.max(0.25, num(fd, "servings") || 1);
   if (!r) return;
-  await run(
+  const res = await run(
     "INSERT INTO food_log (date, slot, name, calories, protein, carbs, fat, recipe_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     date(fd), slot(fd), k === 1 ? r.name : `${r.name} (×${k})`, Math.round(r.calories * k), r.protein * k, r.carbs * k, r.fat * k, r.id,
   );
   done();
+  return insertedIds([res]);
 }
 
 /**

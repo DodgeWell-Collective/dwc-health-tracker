@@ -23,23 +23,27 @@ class Statement {
   }
 
   async all<T = Row>() {
-    return { results: this.stmt().all(...this.params) as T[], success: true, meta: {} };
+    return { results: this.stmt().all(...this.params).map(plain) as T[], success: true, meta: {} };
   }
 
   async first<T = Row>(column?: string): Promise<T | null> {
-    const row = this.stmt().get(...this.params) as Row | undefined;
-    if (!row) return null;
+    const got = this.stmt().get(...this.params);
+    if (!got) return null;
+    const row = plain(got);
     return (column ? row[column] : row) as T;
   }
 
   async run() {
     // Statements that return rows (PRAGMA, SELECT) still report them, as D1 does in a batch.
     const stmt = this.stmt();
-    if (stmt.columns().length) return { results: stmt.all(...this.params), success: true, meta: { changes: 0 } };
+    if (stmt.columns().length) return { results: stmt.all(...this.params).map(plain), success: true, meta: { changes: 0 } };
     const r = stmt.run(...this.params);
     return { results: [], success: true, meta: { changes: Number(r.changes), last_row_id: Number(r.lastInsertRowid) } };
   }
 }
+
+/** node:sqlite rows have no prototype, which React won't pass to client components; D1's are plain objects. */
+const plain = (row: object): Row => ({ ...row });
 
 class Database {
   constructor(private db: DatabaseSync) {}

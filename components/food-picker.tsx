@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState, useTransition, type ReactNode } from "react";
+import { useCallback, useRef, useState, useTransition, type ReactNode } from "react";
 import { foodPortionsAction, searchFoodsAction } from "../app/actions";
 import { macrosFor, VOLUME_UNITS, WEIGHT_UNITS, type FoodHit, type Macros, type Portion } from "../lib/food-math";
 import { BarcodeScan } from "./barcode-scan";
@@ -17,13 +17,31 @@ export interface PickedFood {
   source: FoodHit["source"];
 }
 
+/** The amount last used for each database food, per device: "usda:123" → { amount, unit }. */
+const PORTIONS_KEY = "lastPortions";
+function lastPortion(id: string): { amount: number; unit: string } | undefined {
+  try { return JSON.parse(localStorage.getItem(PORTIONS_KEY) || "{}")[id]; } catch { return undefined; }
+}
+function rememberPortion(id: string, amount: number, unit: string) {
+  try {
+    const all = JSON.parse(localStorage.getItem(PORTIONS_KEY) || "{}");
+    delete all[id];
+    // Newest last; keep the 300 most recent.
+    const kept = Object.fromEntries([...Object.entries(all), [id, { amount, unit }]].slice(-300));
+    localStorage.setItem(PORTIONS_KEY, JSON.stringify(kept));
+  } catch {}
+}
+
 /**
  * Search USDA / Open Food Facts (or scan a barcode), pick a food and an amount;
  * macros come straight from the database values. `quick` renders instant matches
  * under the box as you type (and above any database results); `fallback` renders when the databases have nothing.
+ * Each food starts at the amount you last picked for it; with `instantScan`, scanning a product
+ * you've had before adds it straight away at that amount.
  */
-export function FoodPicker({ onAdd, addLabel = "Add", placeholder = "Search foods", quick, fallback }: {
+export function FoodPicker({ onAdd, addLabel = "Add", placeholder = "Search foods", quick, fallback, instantScan }: {
   onAdd: (food: PickedFood) => void;
+  instantScan?: boolean;
   addLabel?: string;
   placeholder?: string;
   quick?: (query: string, clear: () => void) => ReactNode;
@@ -38,19 +56,36 @@ export function FoodPicker({ onAdd, addLabel = "Add", placeholder = "Search food
   const [amount, setAmount] = useState(1);
   const [unit, setUnit] = useState("g");
 
+  // A scan's results arrive in a callback made on first render; this keeps it on the current meal.
+  const onAddLatest = useRef(onAdd);
+  onAddLatest.current = onAdd;
+
   const clear = useCallback(() => { setQuery(""); setHits(null); setPicked(null); setError(undefined); }, []);
 
   function choose(hit: FoodHit) {
     setPicked(hit);
     setPortions(hit.portions);
     const first = hit.portions[0];
-    setUnit(first ? first.label : "g");
-    setAmount(first ? 1 : 100);
+    const last = lastPortion(hit.id);
+    const known = (list: Portion[]) => last && [...list, ...WEIGHT_UNITS, ...VOLUME_UNITS].some((u) => u.label === last.unit);
+    if (known(hit.portions)) {
+      setUnit(last!.unit);
+      setAmount(last!.amount);
+    } else {
+      setUnit(first ? first.label : "g");
+      setAmount(first ? 1 : 100);
+    }
     if (hit.id.startsWith("usda:") && hit.portions.length === 0) {
       startSearch(async () => {
         const p = await foodPortionsAction(hit.id);
         if (p.length) {
           setPortions(p);
+          if (known(hit.portions)) return;
+          if (known(p)) {
+            setUnit(last!.unit);
+            setAmount(last!.amount);
+            return;
+          }
           // Default to an everyday portion ("1 cup"), not "1 quart".
           setUnit((p.find((x) => x.grams <= 300) ?? p[0]).label);
           setAmount(1);
@@ -66,8 +101,16 @@ export function FoodPicker({ onAdd, addLabel = "Add", placeholder = "Search food
       setHits(res.hits);
       setError(res.error);
       setPicked(null);
-      // A scanned barcode is one exact product: go straight to the amount.
-      if (/^\d{8,14}$/.test(q.trim()) && res.hits.length === 1) choose(res.hits[0]);
+      // A scanned barcode is one exact product: go straight to the amount,
+      // or add it outright when you've had it before.
+      if (/^\d{8,14}$/.test(q.trim()) && res.hits.length === 1) {
+        const hit = res.hits[0];
+        const last = lastPortion(hit.id);
+        const units = [...hit.portions, ...WEIGHT_UNITS, ...VOLUME_UNITS];
+        const per = units.find((u) => u.label === last?.unit)?.grams;
+        if (instantScan && last && per) addFood(hit, last.amount, last.unit, last.amount * per);
+        else choose(hit);
+      }
     });
   }
 
@@ -78,20 +121,23 @@ export function FoodPicker({ onAdd, addLabel = "Add", placeholder = "Search food
   const grams = Math.max(0, amount) * gramsPerUnit;
   const macros = picked ? macrosFor(picked.per100g, grams) : null;
 
-  function add() {
-    if (!picked || !macros || grams <= 0) return;
-    onAdd({
+  function addFood(hit: FoodHit, amount: number, unit: string, grams: number) {
+    if (grams <= 0) return;
+    rememberPortion(hit.id, amount, unit);
+    onAddLatest.current({
       // Skip the brand when the name already says it ("Nutella (Nutella)").
-      name: picked.brand && !picked.name.toLowerCase().includes(picked.brand.toLowerCase()) ? `${picked.name} (${picked.brand})` : picked.name,
+      name: hit.brand && !hit.name.toLowerCase().includes(hit.brand.toLowerCase()) ? `${hit.name} (${hit.brand})` : hit.name,
       amount,
       // "1 serving (1 scoop)" reads as "2 serving (1 scoop)" once multiplied.
       unit: unit.replace(/^1 /, ""),
       grams: Math.round(grams * 10) / 10,
-      macros,
-      source: picked.source,
+      macros: macrosFor(hit.per100g, grams),
+      source: hit.source,
     });
     clear();
   }
+
+  const add = () => picked && addFood(picked, amount, unit, grams);
 
   return (
     <div className="space-y-2">

@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
 // The Node build's stand-in for D1 (lib/node-env.ts), on a throwaway SQLite file.
-type Stmt = { bind(...p: unknown[]): Stmt; all<T>(): Promise<{ results: T[] }>; first<T>(): Promise<T | null>; run(): Promise<{ results: unknown[]; meta: { changes: number } }> };
-type Db = { prepare(sql: string): Stmt; batch(s: Stmt[]): Promise<{ results: unknown[] }[]> };
+type Stmt = { bind(...p: unknown[]): Stmt; all<T>(): Promise<{ results: T[] }>; first<T>(): Promise<T | null>; run(): Promise<{ results: unknown[]; meta: { changes: number; last_row_id?: number } }> };
+type Db = { prepare(sql: string): Stmt; batch(s: Stmt[]): Promise<{ results: unknown[]; meta: { last_row_id?: number } }[]> };
 let db: Db;
 
 beforeAll(async () => {
@@ -39,6 +39,18 @@ describe("node-env", () => {
     ]);
     expect((info.results as { name: string }[]).map((c) => c.name)).toEqual(["date", "kind", "value"]);
     expect(count.results).toEqual([{ n: 2 }]);
+  });
+
+  it("returns plain objects that client components accept", async () => {
+    const [row] = (await db.prepare("SELECT * FROM metric").all<object>()).results;
+    expect(Object.getPrototypeOf(row)).toBe(Object.prototype);
+    expect(Object.getPrototypeOf(await db.prepare("SELECT * FROM metric").first<object>())).toBe(Object.prototype);
+  });
+
+  it("reports each insert's row id in a batch", async () => {
+    await db.prepare("CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)").run();
+    const out = await db.batch([db.prepare("INSERT INTO log (name) VALUES ('a')"), db.prepare("INSERT INTO log (name) VALUES ('b')")]);
+    expect(out.map((r) => r.meta.last_row_id)).toEqual([1, 2]);
   });
 
   it("rolls back a failed batch", async () => {

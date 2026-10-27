@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
-import { logFoods, logRecipe } from "../app/actions";
+import { useEffect, useRef, useState, useTransition } from "react";
+import { logFoods, logRecipe, repeatMeal, undoLog } from "../app/actions";
+import { addDays, formatDate } from "../lib/dates";
 import { SLOTS, type Slot } from "../lib/types";
 import { ClaudeEstimate } from "./ask-claude";
 import { fieldCls, FoodPicker, type PickedFood } from "./food-picker";
@@ -41,16 +42,38 @@ export interface QuickRecipe {
   calories: number;
 }
 
+/** What was eaten at a meal on its most recent earlier day. */
+export interface PreviousMeal {
+  slot: Slot;
+  date: string;
+  calories: number;
+  /** Food names joined with " · ". */
+  items: string;
+}
+
 
 /**
  * One box for all food logging: frequent foods and saved recipes log in one tap,
  * anything else comes from the nutrition databases (search or barcode), with
  * Claude and manual entry as fallbacks that reuse what was typed.
  */
-export function LogFood({ date, defaultSlot, frequent, recipes, claude }: { date: string; defaultSlot: Slot; frequent: QuickFood[]; recipes: QuickRecipe[]; claude: boolean }) {
+export function LogFood({ date, defaultSlot, frequent, recipes, previous, claude }: { date: string; defaultSlot: Slot; frequent: QuickFood[]; recipes: QuickRecipe[]; previous: PreviousMeal[]; claude: boolean }) {
   const [slot, setSlot] = useState<Slot>(defaultSlot);
   const [, start] = useTransition();
-  const [flash, setFlash] = useState<string>();
+  // The last thing added, with the rows to take back if it was a mis-tap.
+  const [flash, setFlashState] = useState<{ msg: string; ids?: number[] }>();
+  const flashTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  function setFlash(msg?: string, ids?: number[]) {
+    clearTimeout(flashTimer.current);
+    setFlashState(msg ? { msg, ids } : undefined);
+    if (msg) flashTimer.current = setTimeout(() => setFlashState(undefined), 8000);
+  }
+  useEffect(() => () => clearTimeout(flashTimer.current), []);
+  function undo() {
+    const ids = flash?.ids;
+    setFlash();
+    if (ids?.length) start(async () => { await undoLog(ids); });
+  }
   const [mode, setMode] = useState<{ kind: "claude" | "manual"; text: string } | null>(null);
 
   // "Use Claude" switch: describe a meal in words instead of searching the databases. Remembered per device.
@@ -71,7 +94,7 @@ export function LogFood({ date, defaultSlot, frequent, recipes, claude }: { date
     const fd = new FormData();
     fd.set("date", date);
     fd.set("items", JSON.stringify([{ ...item, slot }]));
-    start(async () => { await logFoods(fd); setFlash(`Added ${item.name}`); });
+    start(async () => setFlash(`Added ${item.name}`, await logFoods(fd)));
   }
 
   function logSaved(r: QuickRecipe) {
@@ -80,7 +103,18 @@ export function LogFood({ date, defaultSlot, frequent, recipes, claude }: { date
     fd.set("slot", slot);
     fd.set("recipe_id", String(r.id));
     fd.set("servings", "1");
-    start(async () => { await logRecipe(fd); setFlash(`Added ${r.name}`); });
+    start(async () => setFlash(`Added ${r.name}`, await logRecipe(fd)));
+  }
+
+  const last = previous.find((p) => p.slot === slot);
+  // "yesterday", "Tue" within the week, else "Oct 14".
+  const lastDay = last && (last.date === addDays(date, -1) ? "yesterday" : formatDate(last.date, last.date > addDays(date, -7) ? { weekday: "short" } : { month: "short", day: "numeric" }));
+  function logRepeat(p: PreviousMeal) {
+    const fd = new FormData();
+    fd.set("date", date);
+    fd.set("slot", p.slot);
+    fd.set("from", p.date);
+    start(async () => setFlash(`Added ${p.slot} from ${lastDay}`, await repeatMeal(fd)));
   }
 
   return (
@@ -128,15 +162,21 @@ export function LogFood({ date, defaultSlot, frequent, recipes, claude }: { date
       ) : (
         <FoodPicker
           placeholder="Search or scan"
+          instantScan
           addLabel={`Add to ${slot}`}
           onAdd={(f) => logItem({ name: `${f.name}, ${f.amount} ${f.unit}`, ...f.macros })}
           quick={(q, clear) => {
             const term = q.trim().toLowerCase();
             if (!term) {
-              // Staples only: the 4 foods you log most at this meal (logged 3+ times). Everything else autocompletes.
-              const staples = matchesFor(frequent, "", slot).filter((f) => f.slot === slot && (f.uses ?? 0) >= 3).slice(0, 4);
-              return staples.length > 0 && (
+              // One tap: repeat this meal's last day, or one of the foods you usually have at it (logged 2+ times).
+              const staples = matchesFor(frequent, "", slot).filter((f) => f.slot === slot && (f.uses ?? 0) >= 2).slice(0, 6);
+              return (staples.length > 0 || last) && (
                 <div className="flex flex-wrap gap-1.5">
+                  {last && (
+                    <button type="button" onClick={() => logRepeat(last)} className={`${chip} border-emerald-300 dark:border-emerald-800`} title={last.items}>
+                      ↻ Same as {lastDay} <span className="text-zinc-500">{last.calories}</span>
+                    </button>
+                  )}
                   {staples.map((f) => (
                     <button key={f.name} type="button" onClick={() => logItem(f)} className={chip} title={f.name}>
                       {shortName(f.name)} <span className="text-zinc-500">{f.calories}</span>
@@ -168,7 +208,12 @@ export function LogFood({ date, defaultSlot, frequent, recipes, claude }: { date
           )}
         />
       )}
-      {flash && <p className="text-sm text-emerald-600" role="status">✓ {flash}</p>}
+      {flash && (
+        <p className="flex gap-3 text-sm text-emerald-600" role="status">
+          <span className="min-w-0 truncate">✓ {flash.msg}</span>
+          {flash.ids?.length ? <button type="button" onClick={undo} className="shrink-0 text-zinc-500 underline">Undo</button> : null}
+        </p>
+      )}
     </div>
   );
 }
@@ -188,5 +233,27 @@ function ManualEntry({ name, onLog, onCancel }: { name: string; onLog: (item: Qu
       <button className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700">Add</button>
       <button type="button" onClick={onCancel} className="text-sm text-zinc-500 hover:underline">Cancel</button>
     </form>
+  );
+}
+
+/** Phones: a button that jumps down to the food box while it's off screen. */
+export function JumpToLog() {
+  const [hidden, setHidden] = useState(true);
+  useEffect(() => {
+    const target = document.getElementById("log");
+    if (!target) return;
+    const io = new IntersectionObserver(([e]) => setHidden(e.isIntersecting || e.boundingClientRect.top < 0));
+    io.observe(target);
+    return () => io.disconnect();
+  }, []);
+  if (hidden) return null;
+  return (
+    <button
+      type="button"
+      onClick={() => document.getElementById("log")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+      className="fixed right-4 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-10 flex items-center gap-1 rounded-full bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white shadow-lg md:hidden"
+    >
+      <span aria-hidden className="text-lg leading-none">+</span> Food
+    </button>
   );
 }
