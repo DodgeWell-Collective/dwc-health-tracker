@@ -78,6 +78,7 @@ export function LogFood({ date, defaultSlot, frequent, recipes, previous, claude
 
   // "Use Claude" switch: describe a meal in words instead of searching the databases. Remembered per device.
   const [useClaude, setUseClaude] = useState(false);
+  // What's typed, shared by the search box and the Claude box so switching keeps it.
   const [text, setText] = useState("");
   useEffect(() => { try { setUseClaude(claude && localStorage.getItem("logWithClaude") === "1"); } catch {} }, [claude]);
   function toggleClaude() {
@@ -163,6 +164,8 @@ export function LogFood({ date, defaultSlot, frequent, recipes, previous, claude
         <FoodPicker
           placeholder="Search or scan"
           instantScan
+          initialQuery={text}
+          onQueryChange={setText}
           addLabel={`Add to ${slot}`}
           onAdd={(f) => logItem({ name: `${f.name}, ${f.amount} ${f.unit}`, ...f.macros })}
           quick={(q, clear) => {

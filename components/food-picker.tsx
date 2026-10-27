@@ -37,17 +37,23 @@ function rememberPortion(id: string, amount: number, unit: string) {
  * macros come straight from the database values. `quick` renders instant matches
  * under the box as you type (and above any database results); `fallback` renders when the databases have nothing.
  * Each food starts at the amount you last picked for it; with `instantScan`, scanning a product
- * you've had before adds it straight away at that amount.
+ * you've had before adds it straight away at that amount. `initialQuery` and `onQueryChange`
+ * let the typed text outlive this box (switching to and from Claude keeps it).
  */
-export function FoodPicker({ onAdd, addLabel = "Add", placeholder = "Search foods", quick, fallback, instantScan }: {
+export function FoodPicker({ onAdd, addLabel = "Add", placeholder = "Search foods", quick, fallback, instantScan, initialQuery = "", onQueryChange }: {
   onAdd: (food: PickedFood) => void;
   instantScan?: boolean;
+  initialQuery?: string;
+  onQueryChange?: (query: string) => void;
   addLabel?: string;
   placeholder?: string;
   quick?: (query: string, clear: () => void) => ReactNode;
   fallback?: (query: string, clear: () => void) => ReactNode;
 }) {
-  const [query, setQuery] = useState("");
+  const [query, setQueryState] = useState(initialQuery);
+  const queryChanged = useRef(onQueryChange);
+  queryChanged.current = onQueryChange;
+  const setQuery = useCallback((q: string) => { setQueryState(q); queryChanged.current?.(q); }, []);
   const [hits, setHits] = useState<FoodHit[] | null>(null);
   const [error, setError] = useState<string>();
   const [searching, startSearch] = useTransition();
@@ -60,7 +66,7 @@ export function FoodPicker({ onAdd, addLabel = "Add", placeholder = "Search food
   const onAddLatest = useRef(onAdd);
   onAddLatest.current = onAdd;
 
-  const clear = useCallback(() => { setQuery(""); setHits(null); setPicked(null); setError(undefined); }, []);
+  const clear = useCallback(() => { setQuery(""); setHits(null); setPicked(null); setError(undefined); }, [setQuery]);
 
   function choose(hit: FoodHit) {
     setPicked(hit);
