@@ -47,7 +47,8 @@ export function FoodPicker({ onAdd, addLabel = "Add", placeholder = "Search food
   onQueryChange?: (query: string) => void;
   addLabel?: string;
   placeholder?: string;
-  quick?: (query: string, clear: () => void) => ReactNode;
+  /** `choose` opens a food (e.g. one scanned before) at the amount step. */
+  quick?: (query: string, clear: () => void, choose: (hit: FoodHit) => void) => ReactNode;
   fallback?: (query: string, clear: () => void) => ReactNode;
 }) {
   const [query, setQueryState] = useState(initialQuery);
@@ -163,7 +164,7 @@ export function FoodPicker({ onAdd, addLabel = "Add", placeholder = "Search food
       </form>
 
       {/* Your own matches stay on top, above database results. */}
-      {!picked && quick?.(query, clear)}
+      {!picked && quick?.(query, clear, choose)}
       {error && <p className="text-sm text-red-600">{error}</p>}
 
       {picked && macros ? (

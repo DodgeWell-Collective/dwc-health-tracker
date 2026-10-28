@@ -11,6 +11,7 @@ import { SLOTS, type FoodLog, type Recipe, type SetLog, type Slot, type WorkoutE
 import { Bar, Button, Card, fmt, Hidden, Info, Removable, Ring } from "../components/ui";
 import { JumpToLog, LogFood, type QuickFood } from "../components/log-food";
 import { dedupeFoods } from "../lib/food-match";
+import type { FoodHit } from "../lib/food-math";
 import { RestTimer } from "../components/rest-timer";
 import { PendingLink } from "../components/pending-link";
 import { deleteFood, deleteSet, eatPlanned, logSet, logSleep, logWater, logWeight } from "./actions";
@@ -53,7 +54,7 @@ export default async function Today({ searchParams }: { searchParams: Promise<{ 
 
   const names = exercises.map((e) => e.exercise.toLowerCase());
   const trip = tripFor(profile, today);
-  const [history, bests, recipes, logged, setup, risks, bought, previous] = await Promise.all([
+  const [history, bests, recipes, logged, setup, risks, bought, previous, scanned, recipeUses] = await Promise.all([
     // Recent earlier sessions per exercise → today's prescribed weight (lib/loads.ts).
     all<{ exercise: string; date: string; weight_lb: number; reps: number; rir: number | null }>(
       "SELECT exercise, date, weight_lb, reps, rir FROM set_log WHERE date < ? AND date >= ? ORDER BY date, id",
@@ -91,6 +92,12 @@ export default async function Today({ searchParams }: { searchParams: Promise<{ 
        JOIN (SELECT slot, MAX(date) AS d FROM food_log WHERE date < ? AND date >= ? GROUP BY slot) l ON l.slot = f.slot AND l.d = f.date
        GROUP BY f.slot`,
       date, addDays(date, -14),
+    ),
+    // Every product scanned, for autocomplete.
+    all<{ hit: string }>("SELECT hit FROM scanned_food ORDER BY last_scanned DESC LIMIT 500"),
+    all<{ recipe_id: number; uses: number }>(
+      "SELECT recipe_id, COUNT(*) AS uses FROM food_log WHERE recipe_id IS NOT NULL AND date >= ? GROUP BY recipe_id",
+      addDays(today, -180),
     ),
   ]);
   // Bought items first, then what you log most; no duplicates.
@@ -331,7 +338,8 @@ export default async function Today({ searchParams }: { searchParams: Promise<{ 
             frequent={frequent}
             // Only for meals not logged yet that day.
             previous={previous.filter((p) => !food.some((f) => f.slot === p.slot))}
-            recipes={recipes.map((r) => ({ id: r.id, name: r.name, calories: r.calories }))}
+            recipes={recipes.map((r) => ({ id: r.id, name: r.name, calories: r.calories, uses: recipeUses.find((u) => u.recipe_id === r.id)?.uses ?? 0 }))}
+            scanned={scanned.map((s) => JSON.parse(s.hit) as FoodHit)}
             claude={await claudeEnabled()}
           />
         </div>

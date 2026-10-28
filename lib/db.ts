@@ -102,6 +102,15 @@ const SCHEMA = [
     sugar REAL,
     sodium REAL
   )`,
+  // Every product ever scanned, as the database returned it (a FoodHit as JSON), so it
+  // autocompletes when typing and a rescan doesn't need the internet.
+  `CREATE TABLE IF NOT EXISTS scanned_food (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    hit TEXT NOT NULL,
+    scans INTEGER NOT NULL DEFAULT 1,
+    last_scanned TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
   // VO2 max readings (ml/kg/min), from a watch or a field test.
   `CREATE TABLE IF NOT EXISTS vo2max (
     date TEXT PRIMARY KEY,

@@ -521,7 +521,23 @@ export async function suggestRecipesAction(_prev: SuggestState, fd: FormData): P
 export async function searchFoodsAction(query: string): Promise<{ hits: FoodHit[]; error?: string }> {
   const q = String(query ?? "").trim().slice(0, 100);
   if (!q) return { hits: [] };
-  return searchFoods(q);
+  if (!/^\d{8,14}$/.test(q)) return searchFoods(q);
+  // A barcode: answer from earlier scans when we can, and keep every new one.
+  // A 12-digit UPC is often stored under its 13-digit EAN (a leading 0).
+  const known = await first<{ id: string; hit: string }>("SELECT id, hit FROM scanned_food WHERE id IN (?, ?)", `off:${q}`, `off:0${q}`);
+  if (known) {
+    await run("UPDATE scanned_food SET scans = scans + 1, last_scanned = datetime('now') WHERE id = ?", known.id);
+    return { hits: [JSON.parse(known.hit) as FoodHit] };
+  }
+  const res = await searchFoods(q);
+  for (const hit of res.hits) {
+    await run(
+      `INSERT INTO scanned_food (id, name, hit) VALUES (?, ?, ?)
+       ON CONFLICT (id) DO UPDATE SET name = excluded.name, hit = excluded.hit, scans = scans + 1, last_scanned = datetime('now')`,
+      hit.id, hit.name.slice(0, 200), JSON.stringify(hit),
+    );
+  }
+  return res;
 }
 
 export async function foodPortionsAction(id: string): Promise<Portion[]> {

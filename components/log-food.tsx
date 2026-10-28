@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { logFoods, logRecipe, repeatMeal, undoLog } from "../app/actions";
 import { addDays, formatDate } from "../lib/dates";
 import { SLOTS, type Slot } from "../lib/types";
 import { ClaudeEstimate } from "./ask-claude";
 import { fieldCls, FoodPicker, type PickedFood } from "./food-picker";
+import type { FoodHit } from "../lib/food-math";
 
 export interface QuickFood {
   name: string;
@@ -22,7 +23,7 @@ export interface QuickFood {
   uses?: number;
 }
 
-/** Your foods matching what's typed: usual-for-this-meal first, then most logged. */
+/** Your foods for this meal, usual-for-this-meal first, then most logged (the chips). */
 function matchesFor(foods: QuickFood[], term: string, slot: Slot) {
   return foods
     .filter((f) => f.name.toLowerCase().includes(term))
@@ -40,7 +41,15 @@ export interface QuickRecipe {
   id: number;
   name: string;
   calories: number;
+  /** Times logged recently. */
+  uses: number;
 }
+
+/** Eaten this many times (in the last 180 days) to count as one of your usual foods. */
+const USUAL = 2;
+
+/** Name a scanned product is shown and logged under, e.g. "Greek Yogurt (Fage)". */
+const hitName = (h: FoodHit) => (h.brand && !h.name.toLowerCase().includes(h.brand.toLowerCase()) ? `${h.name} (${h.brand})` : h.name);
 
 /** What was eaten at a meal on its most recent earlier day. */
 export interface PreviousMeal {
@@ -57,7 +66,7 @@ export interface PreviousMeal {
  * anything else comes from the nutrition databases (search or barcode), with
  * Claude and manual entry as fallbacks that reuse what was typed.
  */
-export function LogFood({ date, defaultSlot, frequent, recipes, previous, claude }: { date: string; defaultSlot: Slot; frequent: QuickFood[]; recipes: QuickRecipe[]; previous: PreviousMeal[]; claude: boolean }) {
+export function LogFood({ date, defaultSlot, frequent, recipes, scanned, previous, claude }: { date: string; defaultSlot: Slot; frequent: QuickFood[]; recipes: QuickRecipe[]; scanned: FoodHit[]; previous: PreviousMeal[]; claude: boolean }) {
   const [slot, setSlot] = useState<Slot>(defaultSlot);
   const [, start] = useTransition();
   // The last thing added, with the rows to take back if it was a mis-tap.
@@ -168,7 +177,7 @@ export function LogFood({ date, defaultSlot, frequent, recipes, previous, claude
           onQueryChange={setText}
           addLabel={`Add to ${slot}`}
           onAdd={(f) => logItem({ name: `${f.name}, ${f.amount} ${f.unit}`, ...f.macros })}
-          quick={(q, clear) => {
+          quick={(q, clear, choose) => {
             const term = q.trim().toLowerCase();
             if (!term) {
               // One tap: repeat this meal's last day, or one of the foods you usually have at it (logged 2+ times).
@@ -188,17 +197,30 @@ export function LogFood({ date, defaultSlot, frequent, recipes, previous, claude
                 </div>
               );
             }
-            const saved = recipes.filter((r) => r.name.toLowerCase().includes(term)).slice(0, 3);
-            const mine = matchesFor(frequent, term, slot);
-            if (!saved.length && !mine.length) return null;
-            // One tap logs it, already sized as you last had it.
+            // Matches in three groups, each A–Z: what you eat most, what you've scanned, then the rest.
+            // Foods and recipes log in one tap at the size you last had; a scanned product opens at its amount.
+            type Match = { key: string; name: string; right: ReactNode; pick: () => void };
+            const has = (name: string) => name.toLowerCase().includes(term);
+            // Names starting with what's typed first, then A–Z.
+            const starts = (m: { name: string }) => Number(!m.name.toLowerCase().startsWith(term));
+            const byName = (a: { name: string }, b: { name: string }) => starts(a) - starts(b) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+            const food = (f: QuickFood): Match => ({ key: `f${f.name}`, name: f.name, right: f.calories, pick: () => { logItem(f); clear(); } });
+            const recipe = (r: QuickRecipe): Match => ({ key: `r${r.id}`, name: r.name, right: r.calories, pick: () => { logSaved(r); clear(); } });
+            const foods = frequent.filter((f) => has(f.name));
+            const meals = recipes.filter((r) => has(r.name));
+            const usual = [...foods.filter((f) => (f.uses ?? 0) >= USUAL).map(food), ...meals.filter((r) => r.uses >= USUAL).map(recipe)].sort(byName);
+            // A scanned product you already log often shows once, as the one-tap food.
+            const products = scanned
+              .filter((h) => has(`${h.name} ${h.brand ?? ""}`) && !usual.some((u) => u.name.toLowerCase().startsWith(hitName(h).toLowerCase())))
+              .map((h): Match => ({ key: h.id, name: hitName(h), right: <ScanIcon />, pick: () => choose(h) }))
+              .sort(byName);
+            const rest = [...foods.filter((f) => (f.uses ?? 0) < USUAL).map(food), ...meals.filter((r) => r.uses < USUAL).map(recipe)].sort(byName);
+            const matches = [...usual, ...products, ...rest].slice(0, 10);
+            if (!matches.length) return null;
             return (
-              <ul className="divide-y divide-zinc-100 rounded-lg border border-emerald-200 dark:divide-zinc-800 dark:border-emerald-900" aria-label="Your foods">
-                {saved.map((r) => (
-                  <li key={`r${r.id}`}><button type="button" onClick={() => { logSaved(r); clear(); }} className={row}><span>{r.name}</span><span className="shrink-0 tabular-nums text-zinc-500">{r.calories}</span></button></li>
-                ))}
-                {mine.map((f) => (
-                  <li key={f.name}><button type="button" onClick={() => { logItem(f); clear(); }} className={row}><span>{f.name}</span><span className="shrink-0 tabular-nums text-zinc-500">{f.calories}</span></button></li>
+              <ul className="max-h-80 divide-y divide-zinc-100 overflow-y-auto rounded-lg border border-emerald-200 dark:divide-zinc-800 dark:border-emerald-900" aria-label="Your foods">
+                {matches.map((m) => (
+                  <li key={m.key}><button type="button" onClick={m.pick} className={row}><span>{m.name}</span><span className="shrink-0 tabular-nums text-zinc-500">{m.right}</span></button></li>
                 ))}
               </ul>
             );
@@ -236,6 +258,14 @@ function ManualEntry({ name, onLog, onCancel }: { name: string; onLog: (item: Qu
       <button className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700">Add</button>
       <button type="button" onClick={onCancel} className="text-sm text-zinc-500 hover:underline">Cancel</button>
     </form>
+  );
+}
+
+function ScanIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="inline h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-label="Scanned before">
+      <path d="M3 7V4h3M21 7V4h-3M3 17v3h3M21 17v3h-3M7 8v8M10 8v8M13 8v8M17 8v8" />
+    </svg>
   );
 }
 
