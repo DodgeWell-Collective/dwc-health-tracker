@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 
 const FORMATS = ["ean_13", "ean_8", "upc_a", "upc_e"];
 
@@ -15,16 +15,16 @@ async function makeDetector(): Promise<Detector> {
 }
 
 /**
- * Camera button that reads a product barcode and hands back its digits. With `continuous`,
- * the camera stays open for one item after another (a grocery haul) and shows `status`.
+ * Runs the back camera into `video` while `on`, calling `onCode` for each barcode read.
+ * With `continuous` it keeps reading (the same item held in view counts once); otherwise
+ * it calls `onStop` after the first read. `onError` when there's no camera.
  */
-export function BarcodeScan({ onCode, continuous, status }: { onCode: (code: string) => void; continuous?: boolean; status?: string }) {
-  const [open, setOpen] = useState(false);
-  const [error, setError] = useState<string>();
-  const video = useRef<HTMLVideoElement>(null);
-
+function useScanner(video: RefObject<HTMLVideoElement | null>, on: boolean, continuous: boolean, handlers: { onCode: (code: string) => void; onStop?: () => void; onError: () => void }) {
+  // Handlers change every render; the camera shouldn't restart for that.
+  const cb = useRef(handlers);
+  cb.current = handlers;
   useEffect(() => {
-    if (!open) return;
+    if (!on) return;
     let stream: MediaStream | undefined;
     let stopped = false;
     (async () => {
@@ -34,15 +34,14 @@ export function BarcodeScan({ onCode, continuous, status }: { onCode: (code: str
         video.current!.srcObject = stream;
         await video.current!.play();
         const detector = await makeDetector();
-        // The same item held in view reads many times a second; take it once.
         let last = { code: "", at: 0 };
         while (!stopped) {
           const code = (await detector.detect(video.current!).catch(() => []))[0]?.rawValue;
           if (code && !(code === last.code && Date.now() - last.at < 3000)) {
             navigator.vibrate?.(50);
-            onCode(code);
+            cb.current.onCode(code);
             if (!continuous) {
-              setOpen(false);
+              cb.current.onStop?.();
               return;
             }
             last = { code, at: Date.now() };
@@ -50,15 +49,32 @@ export function BarcodeScan({ onCode, continuous, status }: { onCode: (code: str
           await new Promise((r) => setTimeout(r, 200));
         }
       } catch {
-        setError("Camera unavailable. Type the barcode digits instead.");
-        setOpen(false);
+        if (!stopped) cb.current.onError();
       }
     })();
     return () => {
       stopped = true;
       stream?.getTracks().forEach((t) => t.stop());
     };
-  }, [open, onCode, continuous]);
+  }, [video, on, continuous]);
+}
+
+/**
+ * Camera button that reads a product barcode and hands back its digits. With `continuous`,
+ * the camera stays open for one item after another (a grocery haul) and shows `status`.
+ */
+export function BarcodeScan({ onCode, continuous, status }: { onCode: (code: string) => void; continuous?: boolean; status?: string }) {
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string>();
+  const video = useRef<HTMLVideoElement>(null);
+  useScanner(video, open, !!continuous, {
+    onCode,
+    onStop: () => setOpen(false),
+    onError: () => {
+      setError("Camera unavailable. Type the barcode digits instead.");
+      setOpen(false);
+    },
+  });
 
   return (
     <>
@@ -76,5 +92,20 @@ export function BarcodeScan({ onCode, continuous, status }: { onCode: (code: str
         </div>
       )}
     </>
+  );
+}
+
+/** The camera already running in its box, reading one barcode after another. */
+export function LiveScan({ onCode, hint }: { onCode: (code: string) => void; hint: string }) {
+  const [error, setError] = useState(false);
+  const video = useRef<HTMLVideoElement>(null);
+  useScanner(video, !error, true, { onCode, onError: () => setError(true) });
+  if (error) return <p className="flex h-full items-center justify-center p-6 text-center text-sm text-zinc-300">Camera unavailable. Search or type the barcode digits below.</p>;
+  return (
+    <div className="relative h-full w-full">
+      <video ref={video} playsInline muted className="h-full w-full object-cover" />
+      <div aria-hidden className="pointer-events-none absolute top-1/2 left-1/2 h-32 w-60 -translate-x-1/2 -translate-y-1/2 rounded-xl border-4 border-white/80" />
+      <p className="absolute inset-x-0 bottom-3 text-center text-sm text-white drop-shadow">{hint}</p>
+    </div>
   );
 }

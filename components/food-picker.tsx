@@ -1,13 +1,16 @@
 "use client";
 
 import { useCallback, useRef, useState, useTransition, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { foodPortionsAction, searchFoodsAction } from "../app/actions";
 import { hitName, macrosFor, VOLUME_UNITS, WEIGHT_UNITS, type FoodHit, type Macros, type Portion } from "../lib/food-math";
-import { BarcodeScan } from "./barcode-scan";
+import { BarcodeScan, LiveScan } from "./barcode-scan";
 
 export const fieldCls = "rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900";
 
 export interface PickedFood {
+  /** Database id, e.g. "usda:123" or "off:0123456789012". */
+  id: string;
   /** Display name, e.g. "Bananas, raw" or "Gold Standard Whey (Optimum Nutrition)". */
   name: string;
   amount: number;
@@ -21,6 +24,11 @@ export interface PickedFood {
 const PORTIONS_KEY = "lastPortions";
 function lastPortion(id: string): { amount: number; unit: string } | undefined {
   try { return JSON.parse(localStorage.getItem(PORTIONS_KEY) || "{}")[id]; } catch { return undefined; }
+}
+/** After a food was added, change the amount it starts at next time (same unit). */
+export function rememberAmount(id: string, amount: number) {
+  const last = lastPortion(id);
+  if (last) rememberPortion(id, amount, last.unit);
 }
 function rememberPortion(id: string, amount: number, unit: string) {
   try {
@@ -38,11 +46,14 @@ function rememberPortion(id: string, amount: number, unit: string) {
  * under the box as you type (and above any database results); `fallback` renders when the databases have nothing.
  * Each food starts at the amount you last picked for it; with `instantScan`, scanning a product
  * you've had before adds it straight away at that amount. `initialQuery` and `onQueryChange`
- * let the typed text outlive this box (switching to and from Claude keeps it).
+ * let the typed text outlive this box (switching to and from Claude keeps it). Given a
+ * `camera` element, the camera runs there, already scanning, in place of the scan button.
  */
-export function FoodPicker({ onAdd, addLabel = "Add", placeholder = "Search foods", quick, fallback, instantScan, initialQuery = "", onQueryChange }: {
+export function FoodPicker({ onAdd, addLabel = "Add", placeholder = "Search foods", quick, fallback, instantScan, initialQuery = "", onQueryChange, camera, cameraHint = "Point at a barcode" }: {
   onAdd: (food: PickedFood) => void;
   instantScan?: boolean;
+  camera?: HTMLElement | null;
+  cameraHint?: string;
   initialQuery?: string;
   onQueryChange?: (query: string) => void;
   addLabel?: string;
@@ -132,6 +143,7 @@ export function FoodPicker({ onAdd, addLabel = "Add", placeholder = "Search food
     if (grams <= 0) return;
     rememberPortion(hit.id, amount, unit);
     onAddLatest.current({
+      id: hit.id,
       name: hitName(hit),
       amount,
       // "1 serving (1 scoop)" reads as "2 serving (1 scoop)" once multiplied.
@@ -147,6 +159,7 @@ export function FoodPicker({ onAdd, addLabel = "Add", placeholder = "Search food
 
   return (
     <div className="space-y-2">
+      {camera && createPortal(<LiveScan onCode={onCode} hint={cameraHint} />, camera)}
       <form onSubmit={(e) => { e.preventDefault(); search(query); }} className="flex gap-2">
         <input
           value={query}
@@ -156,7 +169,7 @@ export function FoodPicker({ onAdd, addLabel = "Add", placeholder = "Search food
           className={`${fieldCls} min-w-0 flex-1`}
           aria-label="Search foods"
         />
-        <BarcodeScan onCode={onCode} />
+        {camera === undefined && <BarcodeScan onCode={onCode} />}
         <button disabled={searching || !query.trim()} className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">
           {searching && !picked ? "…" : "Search"}
         </button>

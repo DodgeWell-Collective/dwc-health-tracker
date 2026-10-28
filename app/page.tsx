@@ -9,7 +9,7 @@ import { getPlan, slotBudgets } from "../lib/planner";
 import { goalRisks } from "../lib/risk";
 import { SLOTS, type FoodLog, type Recipe, type SetLog, type Slot, type WorkoutExercise } from "../lib/types";
 import { Bar, Button, Card, fmt, Hidden, Info, Removable, Ring } from "../components/ui";
-import { JumpToLog, LogFood, type QuickFood } from "../components/log-food";
+import { LogFood, type QuickFood } from "../components/log-food";
 import { dedupeFoods } from "../lib/food-match";
 import type { FoodHit } from "../lib/food-math";
 import { RestTimer } from "../components/rest-timer";
@@ -26,9 +26,9 @@ const dayHref = (d: string, today: string) => (d === today ? "/" : `/day/${d}`);
 /** Protein per main meal worth hitting for muscle (roughly 0.4 g/kg; 30 g is the common floor). */
 const MEAL_PROTEIN = 30;
 
-export default async function Today({ searchParams }: { searchParams: Promise<{ date?: string }> }) {
+export default async function Today({ searchParams }: { searchParams: Promise<{ date?: string; log?: string }> }) {
   const today = await getToday();
-  const { date: requested } = await searchParams;
+  const { date: requested, log } = await searchParams;
   const date = isDate(requested) ? requested : today;
 
   const [{ profile, targets, weight }, food, plan, day, exercises, sets, weighIns, week, sleep, water] = await Promise.all([
@@ -137,8 +137,21 @@ export default async function Today({ searchParams }: { searchParams: Promise<{ 
     { done: !!setup?.meals, label: "Meal plan", href: "/plan" },
   ];
 
+  const logProps = {
+    date,
+    defaultSlot,
+    frequent,
+    // Only for meals not logged yet that day.
+    previous: previous.filter((p) => !food.some((f) => f.slot === p.slot)),
+    recipes: recipes.map((r) => ({ id: r.id, name: r.name, calories: r.calories, uses: recipeUses.find((u) => u.recipe_id === r.id)?.uses ?? 0 })),
+    scanned: scanned.map((s) => JSON.parse(s.hit) as FoodHit),
+    claude: await claudeEnabled(),
+  };
+
   return (
     <div className="space-y-4">
+      {/* The tab bar's Log button (and links to /?log from outside the app) open this over the page. */}
+      {log !== undefined && <LogFood {...logProps} panel />}
       <div className="flex items-center justify-between">
         <PendingLink href={dayHref(addDays(date, -1), today)} className="rounded-md px-3 py-1 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800" aria-label="Previous day">←</PendingLink>
         <div className="text-center">
@@ -329,19 +342,9 @@ export default async function Today({ searchParams }: { searchParams: Promise<{ 
         </Card>
       </div>
 
-      <JumpToLog />
       <Card title="Meals" action={<Link href="/plan" className="text-sm text-emerald-600">Plan →</Link>}>
         <div id="log" className="mb-4 scroll-mt-[calc(1rem+env(safe-area-inset-top))]">
-          <LogFood
-            date={date}
-            defaultSlot={defaultSlot}
-            frequent={frequent}
-            // Only for meals not logged yet that day.
-            previous={previous.filter((p) => !food.some((f) => f.slot === p.slot))}
-            recipes={recipes.map((r) => ({ id: r.id, name: r.name, calories: r.calories, uses: recipeUses.find((u) => u.recipe_id === r.id)?.uses ?? 0 }))}
-            scanned={scanned.map((s) => JSON.parse(s.hit) as FoodHit)}
-            claude={await claudeEnabled()}
-          />
+          <LogFood {...logProps} />
         </div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {SLOTS.map((slot) => {

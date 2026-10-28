@@ -14,6 +14,7 @@
     { "src": "/pwa/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ],
   "shortcuts": [
+    { "name": "Log food", "url": "/?log" },
     { "name": "Meal plan", "url": "/plan" },
     { "name": "Shopping list", "url": "/shopping" }
   ]

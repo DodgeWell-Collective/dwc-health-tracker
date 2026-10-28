@@ -1,12 +1,14 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { logFoods, logRecipe, repeatMeal, undoLog } from "../app/actions";
 import { addDays, formatDate } from "../lib/dates";
 import { SLOTS, type Slot } from "../lib/types";
 import { ClaudeEstimate } from "./ask-claude";
-import { fieldCls, FoodPicker, type PickedFood } from "./food-picker";
-import { hitName, type FoodHit } from "../lib/food-math";
+import { fieldCls, FoodPicker, rememberAmount, type PickedFood } from "./food-picker";
+import { LOG_BACK_KEY } from "./nav";
+import { hitName, type FoodHit, type Macros } from "../lib/food-math";
 
 export interface QuickFood {
   name: string;
@@ -59,35 +61,97 @@ export interface PreviousMeal {
 }
 
 
+/** Step for the −/+ on a just-added food: halves near 1, ones, then tens. */
+const stepFor = (amount: number) => (amount < 2 ? 0.5 : amount < 20 ? 1 : 10);
+const r1 = (n: number) => Math.round(n * 10) / 10;
+function scaled(f: PickedFood, amount: number): PickedFood {
+  const k = amount / f.amount;
+  const m = f.macros;
+  const opt = (v?: number | null) => (v == null ? v : r1(v * k));
+  const macros: Macros = { calories: Math.round(m.calories * k), protein: r1(m.protein * k), carbs: r1(m.carbs * k), fat: r1(m.fat * k), fiber: opt(m.fiber), sugar: opt(m.sugar), sodium: opt(m.sodium) };
+  return { ...f, amount, grams: r1(f.grams * k), macros };
+}
+
 /**
  * One box for all food logging: frequent foods and saved recipes log in one tap,
  * anything else comes from the nutrition databases (search or barcode), with
- * Claude and manual entry as fallbacks that reuse what was typed.
+ * Claude and manual entry as fallbacks that reuse what was typed. With `panel`, it
+ * fills the screen with the camera already scanning on top (the tab bar's Log button).
  */
-export function LogFood({ date, defaultSlot, frequent, recipes, scanned, previous, claude }: { date: string; defaultSlot: Slot; frequent: QuickFood[]; recipes: QuickRecipe[]; scanned: FoodHit[]; previous: PreviousMeal[]; claude: boolean }) {
+export function LogFood({ date, defaultSlot, frequent, recipes, scanned, previous, claude, panel }: { date: string; defaultSlot: Slot; frequent: QuickFood[]; recipes: QuickRecipe[]; scanned: FoodHit[]; previous: PreviousMeal[]; claude: boolean; panel?: boolean }) {
   const [slot, setSlot] = useState<Slot>(defaultSlot);
   const [, start] = useTransition();
-  // The last thing added, with the rows to take back if it was a mis-tap.
-  const [flash, setFlashState] = useState<{ msg: string; ids?: number[] }>();
-  const flashTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  function setFlash(msg?: string, ids?: number[]) {
-    clearTimeout(flashTimer.current);
-    setFlashState(msg ? { msg, ids } : undefined);
-    if (msg) flashTimer.current = setTimeout(() => setFlashState(undefined), 8000);
+  // Logging, undoing and re-sizing run one after another, so each sees the rows the last one left.
+  const chain = useRef<Promise<unknown>>(Promise.resolve());
+  function run(fn: () => Promise<unknown>) {
+    const p = chain.current.then(fn, fn);
+    chain.current = p.catch(() => {});
+    start(async () => { await p; });
   }
-  useEffect(() => () => clearTimeout(flashTimer.current), []);
+  // The last thing added and the rows to take back if it was a mis-tap; a database food can be re-sized.
+  const ids = useRef<number[]>([]);
+  const [flash, setFlashState] = useState<{ msg: string; undo: boolean; food?: PickedFood & { slot: Slot } }>();
+  const flashTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  function keepFlash() {
+    clearTimeout(flashTimer.current);
+    // The panel keeps it until the next thing; the box on Today clears it after a while.
+    if (!panel) flashTimer.current = setTimeout(() => setFlashState(undefined), 8000);
+  }
+  function setFlash(msg?: string, food?: PickedFood & { slot: Slot }) {
+    setFlashState(msg ? { msg, undo: ids.current.length > 0, food } : undefined);
+    keepFlash();
+  }
+  function logged(msg: string, newIds: number[], food?: PickedFood & { slot: Slot }) {
+    ids.current = newIds;
+    setFlash(msg, food);
+  }
+  async function takeBack() {
+    const was = ids.current;
+    ids.current = [];
+    if (was.length) await undoLog(was);
+  }
+  // A re-size waits for the taps to stop, then swaps the row; closing the panel sends it at once.
+  const resize = useRef<() => void>(undefined);
+  const resizeTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  function flushResize() {
+    clearTimeout(resizeTimer.current);
+    resize.current?.();
+    resize.current = undefined;
+  }
+  useEffect(() => () => { clearTimeout(flashTimer.current); flushResize(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   function undo() {
-    const ids = flash?.ids;
+    clearTimeout(resizeTimer.current);
+    resize.current = undefined;
     setFlash();
-    if (ids?.length) start(async () => { await undoLog(ids); });
+    run(takeBack);
+  }
+  function adjust(sign: 1 | -1) {
+    const f = flash?.food;
+    if (!f) return;
+    const amount = r1(f.amount + sign * stepFor(f.amount));
+    if (amount <= 0) return;
+    const food = { ...scaled(f, amount), slot: f.slot };
+    setFlashState({ ...flash, food });
+    keepFlash();
+    rememberAmount(f.id, amount);
+    clearTimeout(resizeTimer.current);
+    resize.current = () => run(async () => {
+      await takeBack();
+      ids.current = await logFoods(foodForm(food, food.slot));
+    });
+    resizeTimer.current = setTimeout(flushResize, 700);
   }
   const [mode, setMode] = useState<{ kind: "claude" | "manual"; text: string } | null>(null);
 
-  // "Use Claude" switch: describe a meal in words instead of searching the databases. Remembered per device.
+  // "Use Claude" switch: describe a meal in words instead of searching the databases. Remembered per
+  // device; the panel always opens on the camera.
   const [useClaude, setUseClaude] = useState(false);
   // What's typed, shared by the search box and the Claude box so switching keeps it.
   const [text, setText] = useState("");
-  useEffect(() => { try { setUseClaude(claude && localStorage.getItem("logWithClaude") === "1"); } catch {} }, [claude]);
+  useEffect(() => { try { setUseClaude(!panel && claude && localStorage.getItem("logWithClaude") === "1"); } catch {} }, [claude, panel]);
+  const [camera, setCamera] = useState<HTMLDivElement | null>(null);
+  // A scanned barcode passes through the search box; the camera stays on for that.
+  const typing = text.trim() !== "" && !/^\d{8,14}$/.test(text.trim());
   function toggleClaude() {
     setUseClaude((on) => {
       try { localStorage.setItem("logWithClaude", on ? "0" : "1"); } catch {}
@@ -96,13 +160,25 @@ export function LogFood({ date, defaultSlot, frequent, recipes, scanned, previou
     setMode(null);
   }
 
-  const done = (msg?: string) => { setMode(null); if (msg) setFlash(msg); };
+  const done = (msg?: string) => { setMode(null); if (msg) logged(msg, []); };
 
-  function logItem(item: QuickFood | (PickedFood["macros"] & { name: string })) {
+  function itemForm(item: QuickFood | (Macros & { name: string }), at: Slot) {
     const fd = new FormData();
     fd.set("date", date);
-    fd.set("items", JSON.stringify([{ ...item, slot }]));
-    start(async () => setFlash(`Added ${item.name}`, await logFoods(fd)));
+    fd.set("items", JSON.stringify([{ ...item, slot: at }]));
+    return fd;
+  }
+  const foodForm = (f: PickedFood, at: Slot) => itemForm({ name: `${f.name}, ${f.amount} ${f.unit}`, ...f.macros }, at);
+
+  function logItem(item: QuickFood | (Macros & { name: string })) {
+    const fd = itemForm(item, slot);
+    run(async () => logged(`Added ${item.name}`, await logFoods(fd)));
+  }
+
+  function logPicked(f: PickedFood) {
+    const at = slot;
+    flushResize();
+    run(async () => logged(`Added ${f.name}`, await logFoods(foodForm(f, at)), { ...f, slot: at }));
   }
 
   function logSaved(r: QuickRecipe) {
@@ -111,7 +187,7 @@ export function LogFood({ date, defaultSlot, frequent, recipes, scanned, previou
     fd.set("slot", slot);
     fd.set("recipe_id", String(r.id));
     fd.set("servings", "1");
-    start(async () => setFlash(`Added ${r.name}`, await logRecipe(fd)));
+    run(async () => logged(`Added ${r.name}`, (await logRecipe(fd)) ?? []));
   }
 
   const last = previous.find((p) => p.slot === slot);
@@ -122,11 +198,12 @@ export function LogFood({ date, defaultSlot, frequent, recipes, scanned, previou
     fd.set("date", date);
     fd.set("slot", p.slot);
     fd.set("from", p.date);
-    start(async () => setFlash(`Added ${p.slot} from ${lastDay}`, await repeatMeal(fd)));
+    run(async () => logged(`Added ${p.slot} from ${lastDay}`, await repeatMeal(fd)));
   }
 
-  return (
-    <div className="space-y-2">
+  const chipCls = panel ? `${chip} py-2` : chip;
+  const body = (
+    <div className={panel ? "space-y-3" : "space-y-2"}>
       <div className="flex gap-1" role="radiogroup" aria-label="Meal">
         {SLOTS.map((s) => (
           <button
@@ -135,7 +212,7 @@ export function LogFood({ date, defaultSlot, frequent, recipes, scanned, previou
             role="radio"
             aria-checked={slot === s}
             onClick={() => setSlot(s)}
-            className={`rounded-full px-3 py-1 text-xs font-medium capitalize ${slot === s ? "bg-emerald-600 text-white" : "text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"}`}
+            className={`rounded-full font-medium capitalize ${panel ? "flex-1 py-2 text-sm" : "px-3 py-1 text-xs"} ${slot === s ? "bg-emerald-600 text-white" : "text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"}`}
           >
             {s}
           </button>
@@ -173,8 +250,10 @@ export function LogFood({ date, defaultSlot, frequent, recipes, scanned, previou
           instantScan
           initialQuery={text}
           onQueryChange={setText}
+          camera={panel ? (typing ? null : camera) : undefined}
+          cameraHint={`Point at a barcode · logs to ${slot}`}
           addLabel={`Add to ${slot}`}
-          onAdd={(f) => logItem({ name: `${f.name}, ${f.amount} ${f.unit}`, ...f.macros })}
+          onAdd={logPicked}
           quick={(q, clear, choose) => {
             const term = q.trim().toLowerCase();
             if (!term) {
@@ -183,12 +262,12 @@ export function LogFood({ date, defaultSlot, frequent, recipes, scanned, previou
               return (staples.length > 0 || last) && (
                 <div className="flex flex-wrap gap-1.5">
                   {last && (
-                    <button type="button" onClick={() => logRepeat(last)} className={`${chip} border-emerald-300 dark:border-emerald-800`} title={last.items}>
+                    <button type="button" onClick={() => logRepeat(last)} className={`${chipCls} border-emerald-300 dark:border-emerald-800`} title={last.items}>
                       ↻ Same as {lastDay} <span className="text-zinc-500">{last.calories}</span>
                     </button>
                   )}
                   {staples.map((f) => (
-                    <button key={f.name} type="button" onClick={() => logItem(f)} className={chip} title={f.name}>
+                    <button key={f.name} type="button" onClick={() => logItem(f)} className={chipCls} title={f.name}>
                       {shortName(f.name)} <span className="text-zinc-500">{f.calories}</span>
                     </button>
                   ))}
@@ -232,11 +311,63 @@ export function LogFood({ date, defaultSlot, frequent, recipes, scanned, previou
         />
       )}
       {flash && (
-        <p className="flex gap-3 text-sm text-emerald-600" role="status">
-          <span className="min-w-0 truncate">✓ {flash.msg}</span>
-          {flash.ids?.length ? <button type="button" onClick={undo} className="shrink-0 text-zinc-500 underline">Undo</button> : null}
-        </p>
+        <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 text-sm ${panel ? "rounded-xl border border-emerald-200 bg-white p-3 dark:border-emerald-900 dark:bg-zinc-900" : ""}`} role="status">
+          <span className="min-w-0 flex-1 truncate text-emerald-600">✓ {flash.food ? `${flash.food.name} · ${flash.food.slot}` : flash.msg}</span>
+          {flash.undo && <button type="button" onClick={undo} className={`shrink-0 text-zinc-500 underline ${panel ? "px-2 py-1" : ""}`}>Undo</button>}
+          {flash.food && (
+            <span className="flex basis-full items-center gap-2 text-zinc-500">
+              <button type="button" onClick={() => adjust(-1)} aria-label="Less" className={`${stepBtn} ${panel ? "h-10 w-10" : "h-8 w-8"}`}>−</button>
+              <span className="tabular-nums text-zinc-900 dark:text-zinc-100">{flash.food.amount} {flash.food.unit}</span>
+              <button type="button" onClick={() => adjust(1)} aria-label="More" className={`${stepBtn} ${panel ? "h-10 w-10" : "h-8 w-8"}`}>+</button>
+              <span className="ml-auto tabular-nums">{flash.food.macros.calories} kcal · {flash.food.macros.protein}g protein</span>
+            </span>
+          )}
+        </div>
       )}
+    </div>
+  );
+
+  if (!panel) return body;
+  return <Panel camera={setCamera} typing={typing}>{body}</Panel>;
+}
+
+const stepBtn = "shrink-0 rounded-full border border-zinc-300 text-base leading-none text-zinc-700 dark:border-zinc-700 dark:text-zinc-200";
+
+/** Full screen on phones (a sheet under the camera), a dialog on wider screens. Closing goes back to where Log was tapped. */
+function Panel({ camera, typing, children }: { camera: (el: HTMLDivElement | null) => void; typing: boolean; children: ReactNode }) {
+  const router = useRouter();
+  function close() {
+    let back = false;
+    try { back = sessionStorage.getItem(LOG_BACK_KEY) === "1"; sessionStorage.removeItem(LOG_BACK_KEY); } catch {}
+    if (back) return router.back();
+    const u = new URL(location.href);
+    u.searchParams.delete("log");
+    router.replace(u.pathname + u.search, { scroll: false });
+  }
+  const closeLatest = useRef(close);
+  closeLatest.current = close;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") closeLatest.current(); };
+    addEventListener("keydown", onKey);
+    // The page underneath stays put.
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { removeEventListener("keydown", onKey); document.body.style.overflow = overflow; };
+  }, []);
+  return (
+    <div role="dialog" aria-modal="true" aria-label="Log food" className="fixed inset-0 z-40 flex flex-col overscroll-contain bg-black md:items-center md:justify-center md:bg-black/60 md:p-6">
+      <div className="flex min-h-0 w-full flex-1 flex-col md:max-h-[90vh] md:max-w-md md:flex-none md:overflow-hidden md:rounded-2xl">
+        <div className={`relative shrink-0 overflow-hidden bg-zinc-900 transition-[height] ${typing ? "h-[calc(3.75rem+env(safe-area-inset-top))]" : "h-[42vh] md:h-80"}`}>
+          <div ref={camera} className="absolute inset-0" />
+          <button type="button" onClick={close} aria-label="Close" className="absolute top-[calc(0.5rem+env(safe-area-inset-top))] left-3 flex h-11 w-11 items-center justify-center rounded-full bg-black/50 text-white">
+            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+        </div>
+        <div className="-mt-4 min-h-0 flex-1 overflow-y-auto rounded-t-2xl bg-zinc-50 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] md:mt-0 md:rounded-none dark:bg-zinc-950">
+          {children}
+          <button type="button" onClick={close} className="mt-4 w-full rounded-xl bg-emerald-600 py-3 text-base font-medium text-white hover:bg-emerald-700">Done</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -267,24 +398,3 @@ function ScanIcon() {
   );
 }
 
-/** Phones: a button that jumps down to the food box while it's off screen. */
-export function JumpToLog() {
-  const [hidden, setHidden] = useState(true);
-  useEffect(() => {
-    const target = document.getElementById("log");
-    if (!target) return;
-    const io = new IntersectionObserver(([e]) => setHidden(e.isIntersecting || e.boundingClientRect.top < 0));
-    io.observe(target);
-    return () => io.disconnect();
-  }, []);
-  if (hidden) return null;
-  return (
-    <button
-      type="button"
-      onClick={() => document.getElementById("log")?.scrollIntoView({ behavior: "smooth", block: "start" })}
-      className="fixed right-4 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-10 flex items-center gap-1 rounded-full bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white shadow-lg md:hidden"
-    >
-      <span aria-hidden className="text-lg leading-none">+</span> Food
-    </button>
-  );
-}
