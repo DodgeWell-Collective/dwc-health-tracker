@@ -4,7 +4,7 @@ import { getToday } from "../../lib/data";
 // "Download all my data": one CSV per table, zipped. A tiny store-only zip
 // writer is enough here and avoids a dependency.
 
-const TABLES = ["profile", "weigh_in", "food_log", "set_log", "workout_day", "workout_exercise", "strength_goal", "recipe", "meal_plan", "vo2max", "saved_food", "scanned_food", "shopping_extra", "metric", "shopping_check"];
+const TABLES = ["profile", "weigh_in", "food_log", "set_log", "workout_day", "workout_exercise", "strength_goal", "recipe", "meal_plan", "vo2max", "saved_food", "scanned_food", "grocery", "shopping_extra", "metric", "shopping_check"];
 
 function csv(rows: Record<string, unknown>[]) {
   if (rows.length === 0) return "";

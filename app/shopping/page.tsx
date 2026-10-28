@@ -3,9 +3,11 @@ import { all } from "../../lib/db";
 import { getProfile, getToday, tripFor } from "../../lib/data";
 import { addDays, formatDate, isDate } from "../../lib/dates";
 import { FRESH_DAYS, getPlan, shoppingList } from "../../lib/planner";
-import { Card, Hidden, Info, Removable } from "../../components/ui";
+import { Button, Card, Hidden, Info, Removable } from "../../components/ui";
 import { ShoppingAdd } from "../../components/shopping-add";
-import { addStaple, deleteShoppingItem, toggleShopping } from "../actions";
+import { GroceryScan } from "../../components/grocery-scan";
+import { GROCERY_DAYS, groceriesOnHand, groceryMatcher, householdServings } from "../../lib/groceries";
+import { addStaple, deleteGrocery, deleteShoppingItem, generateTripAction, toggleShopping } from "../actions";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +23,7 @@ export default async function Shopping({ searchParams }: { searchParams: Promise
   const { trip: requested } = await searchParams;
   const profile = await getProfile();
   const trip = tripFor(profile, isDate(requested) ? requested : today);
-  const [plan, checked, extras] = await Promise.all([
+  const [plan, checked, extras, groceries] = await Promise.all([
     getPlan(trip.start, trip.days),
     // Checked items are keyed by the trip's first day.
     all<{ item_key: string }>("SELECT item_key FROM shopping_check WHERE week_start = ?", trip.start),
@@ -29,14 +31,18 @@ export default async function Shopping({ searchParams }: { searchParams: Promise
       "SELECT e.id, e.name, e.aisle, e.qty, f.calories FROM shopping_extra e LEFT JOIN saved_food f ON f.id = e.food_id WHERE e.trip_start = ? ORDER BY e.id",
       trip.start,
     ),
+    groceriesOnHand(today),
   ]);
   const done = new Set(checked.map((c) => c.item_key));
   // Staples ("always on hand") stay off the list; matched as whole words, so "olive oil" covers "Extra virgin olive oil".
   const staples = profile.pantry.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
   const isStaple = (item: string) => staples.some((s) => new RegExp(`\\b${s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(item));
-  const all_ = shoppingList(plan, trip.start);
-  const items = all_.filter((i) => !isStaple(i.item));
+  // Sized for everyone at the shared meals; groceries already bought count as had.
+  const all_ = shoppingList(plan, trip.start, (m) => householdServings(profile, m.slot, !!m.recipe.daily));
+  const bought = groceryMatcher(groceries.map((g) => g.name));
+  const items = all_.filter((i) => !isStaple(i.item) && !bought(i.item));
   const onHand = all_.filter((i) => isStaple(i.item));
+  const have = all_.filter((i) => !isStaple(i.item) && bought(i.item));
   const aisles = [...new Set([...items.map((i) => i.aisle), ...extras.map((e) => e.aisle)])];
   const total = items.length + extras.length;
   const remaining = items.filter((i) => !done.has(i.key)).length + extras.filter((e) => !done.has(`x:${e.id}`)).length;
@@ -55,6 +61,25 @@ export default async function Shopping({ searchParams }: { searchParams: Promise
         </div>
         {total > 0 && <span className="text-sm text-zinc-500">{remaining} of {total} items left</span>}
       </div>
+
+      <Card title={<>Groceries you bought<Info>Scan your haul when you get home (the camera stays open for item after item) or type names. For {GROCERY_DAYS} days, meal plans favor recipes that use them, and they're left off this list.</Info></>}>
+        <GroceryScan />
+        {groceries.length > 0 && (
+          <>
+            <ul className="mt-3 flex flex-wrap gap-1.5">
+              {groceries.map((g) => (
+                <li key={g.id} className="rounded-full border border-zinc-200 px-2.5 py-0.5 text-sm dark:border-zinc-700">
+                  <Removable action={deleteGrocery} fields={{ id: g.id }}>{g.name}</Removable>
+                </li>
+              ))}
+            </ul>
+            <form action={generateTripAction} className="mt-3">
+              <Hidden date={trip.start} />
+              <Button variant="ghost">Re-plan this trip around them</Button>
+            </form>
+          </>
+        )}
+      </Card>
 
       <Card title={<>Add items<Info>Scan a barcode or search. Nutrition for the amount you pick (usually one serving) is saved, so the item shows up as a one-tap chip when you log food on Today.</Info></>}>
         <ShoppingAdd trip={trip.start} />
@@ -132,6 +157,9 @@ export default async function Shopping({ searchParams }: { searchParams: Promise
             </Card>
           ))}
         </div>
+      )}
+      {have.length > 0 && (
+        <p className="text-xs text-zinc-500">Already bought: {have.map((i) => i.item).join(", ")}</p>
       )}
       {onHand.length > 0 && (
         <p className="text-xs text-zinc-500">

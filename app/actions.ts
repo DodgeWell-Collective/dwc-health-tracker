@@ -11,7 +11,7 @@ import {
   type ParsedFood, type ParseResult, type SavedRecipe, type SuggestedRecipe,
 } from "../lib/claude";
 import { foodPortions, searchFoods, type FoodHit, type Macros, type Portion } from "../lib/foods";
-import { AISLES, guessAisle } from "../lib/food-math";
+import { AISLES, guessAisle, hitName } from "../lib/food-math";
 import { substitute, type ProgramDay } from "../lib/program";
 import { EQUIPMENT, SLOTS, type Aisle, type Recipe, type Slot } from "../lib/types";
 
@@ -352,6 +352,7 @@ const PROFILE_FIELDS: Record<string, (fd: FormData) => unknown> = {
   experience: (fd) => oneOf(str(fd, "experience"), ["beginner", "intermediate", "advanced"], "beginner"),
   shop_every: (fd) => Math.min(28, Math.max(1, Math.round(num(fd, "shop_every")) || 7)),
   shop_anchor: (fd) => (isDate(str(fd, "shop_anchor")) ? str(fd, "shop_anchor") : null),
+  household: (fd) => Math.min(12, Math.max(0, Math.round(num(fd, "household")) || 0)),
 };
 
 /** Save whichever profile fields the (auto-saving) form sent; each Settings tab sends only its own. */
@@ -371,6 +372,10 @@ export async function saveProfile(fd: FormData) {
   if (fd.has("equipment_present")) {
     sets.push("equipment = ?");
     values.push(fd.getAll("equipment").map(String).filter((k) => EQUIPMENT.some(([key]) => key === k)).join(","));
+  }
+  if (fd.has("household_slots_present")) {
+    sets.push("household_slots = ?");
+    values.push(fd.getAll("household_slots").map(String).filter((s) => SLOTS.includes(s as Slot)).join(","));
   }
   if (!sets.length) return;
   await run(`UPDATE profile SET ${sets.join(", ")}, profile_done = 1 WHERE id = 1`, ...values);
@@ -460,6 +465,30 @@ export async function addShoppingItem(fd: FormData) {
      ON CONFLICT (trip_start, name) DO UPDATE SET qty = qty + 1, food_id = COALESCE(excluded.food_id, food_id)`,
     trip, name, aisle, foodId,
   );
+  done();
+}
+
+// Groceries bought
+
+/** A scanned grocery: looked up (and kept, like every scan), then counted as on hand. */
+export async function addGroceryCode(code: string): Promise<{ name?: string; error?: string }> {
+  const { hits, error } = await searchFoodsAction(code);
+  const hit = hits[0];
+  if (!hit) return { error: error ?? "Not in the database. Type its name instead." };
+  const name = hitName(hit).slice(0, 200);
+  await run("INSERT INTO grocery (name, scanned_id, added) VALUES (?, ?, ?)", name, hit.id, await getToday());
+  done();
+  return { name };
+}
+
+export async function addGroceryName(fd: FormData) {
+  const name = str(fd, "name").slice(0, 200);
+  if (name) await run("INSERT INTO grocery (name, added) VALUES (?, ?)", name, await getToday());
+  done();
+}
+
+export async function deleteGrocery(fd: FormData) {
+  await run("DELETE FROM grocery WHERE id = ?", num(fd, "id"));
   done();
 }
 

@@ -1,6 +1,7 @@
 import { all, getDb } from "./db";
 import { activeRecipes, dailyRecipes, getProfile, getTargets, tripFor } from "./data";
 import { addDays, daysBetween } from "./dates";
+import { groceriesOnHand, groceryMatcher } from "./groceries";
 import { SLOTS, type Ingredient, type Recipe, type Slot } from "./types";
 
 /** Share of the daily calorie target given to each meal slot. */
@@ -8,6 +9,9 @@ export const SLOT_SHARE: Record<Slot, number> = { breakfast: 0.25, lunch: 0.3, d
 
 /** A recipe can't reappear within this many days of itself. */
 const NO_REPEAT_DAYS = 3;
+
+/** How much a recipe made entirely from groceries you've bought outranks one sharing the list. */
+const GROCERY_WEIGHT = 0.75;
 
 /** Full plans tried per trip; the one needing the fewest distinct ingredients wins. */
 const ATTEMPTS = 60;
@@ -55,11 +59,18 @@ function usedRecently(plan: PlanRow[], recipeId: number, date: string) {
   return plan.some((p) => p.recipe_id === recipeId && p.date !== date && Math.abs(daysBetween(p.date, date)) <= NO_REPEAT_DAYS);
 }
 
+/** Share of a recipe's ingredients already bought (0 when nothing has been). */
+async function groceryShare(date: string) {
+  const have = groceryMatcher((await groceriesOnHand(date)).map((g) => g.name));
+  return { have, share: (r: Recipe) => { const keys = ingredientKeys(r); return keys.length ? keys.filter(have).length / keys.length : 0; } };
+}
+
 /**
- * Pick a recipe for a slot, favoring ones whose ingredients are already on this
- * trip's list. `jitter` adds randomness so repeated attempts explore different plans.
+ * Pick a recipe for a slot, favoring ones that use groceries you've bought, then ones
+ * whose ingredients are already on this trip's list. `jitter` adds randomness so
+ * repeated attempts explore different plans.
  */
-function choose(recipes: Recipe[], slot: Slot, date: string, plan: PlanRow[], basket: Set<string>, jitter: number, exclude?: number, keysOf = ingredientKeys): Recipe | undefined {
+function choose(recipes: Recipe[], slot: Slot, date: string, plan: PlanRow[], basket: Set<string>, jitter: number, exclude?: number, keysOf = ingredientKeys, bought: (r: Recipe) => number = () => 0): Recipe | undefined {
   const candidates = recipes.filter((r) => r.meal_type === slot && r.id !== exclude);
   if (candidates.length === 0) return undefined;
   const fresh = candidates.filter((r) => !usedRecently(plan, r.id, date));
@@ -69,7 +80,7 @@ function choose(recipes: Recipe[], slot: Slot, date: string, plan: PlanRow[], ba
   for (const r of pool) {
     const keys = keysOf(r);
     const overlap = keys.length ? keys.filter((k) => basket.has(k)).length / keys.length : 1;
-    const score = overlap + Math.random() * jitter;
+    const score = overlap + GROCERY_WEIGHT * bought(r) + Math.random() * jitter;
     if (score > bestScore) [best, bestScore] = [r, score];
   }
   return best;
@@ -105,9 +116,10 @@ export async function generatePlan(start: string, days: number) {
   const byId = new Map(recipes.map((r) => [r.id, r]));
   const daily = dailyRecipes(recipes);
   const rotating = recipes.filter((r) => !r.daily);
-  // Staples on hand don't cost a shopping item, so they don't count against a plan.
+  // Staples and groceries on hand don't cost a shopping item, so they don't count against a plan.
   const staples = profile.pantry.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
-  const toBuy = (r: Recipe) => ingredientKeys(r).filter((k) => !staples.some((s) => k.includes(s)));
+  const { have, share } = await groceryShare(start);
+  const toBuy = (r: Recipe) => ingredientKeys(r).filter((k) => !staples.some((s) => k.includes(s)) && !have(k));
 
   const context = (await planBetween(addDays(trip.start < start ? trip.start : start, -NO_REPEAT_DAYS), addDays(trip.end > end ? trip.end : end, NO_REPEAT_DAYS)))
     .filter((p) => p.date < start || p.date > end);
@@ -131,7 +143,7 @@ export async function generatePlan(start: string, days: number) {
     for (const date of dates) {
       for (const slot of SLOTS) {
         const fixed = daily[slot];
-        const r = fixed ?? choose(rotating, slot, date, plan, basket, jitter, undefined, toBuy);
+        const r = fixed ?? choose(rotating, slot, date, plan, basket, jitter, undefined, toBuy, share);
         if (!r) continue;
         const row = { date, slot, recipe_id: r.id, servings: fixed ? 1 : servingsFor(r, budgets.get(date)![slot]) };
         plan.push(row);
@@ -166,7 +178,8 @@ export async function swapMeal(date: string, slot: Slot) {
       .flatMap((p) => (byId.get(p.recipe_id) ? ingredientKeys(byId.get(p.recipe_id)!) : [])),
   );
   // Swapping a daily recipe's slot picks a one-off replacement from the rotation.
-  const r = choose(recipes.filter((x) => !x.daily), slot, date, plan, basket, 0.35, current?.recipe_id);
+  const { share } = await groceryShare(date);
+  const r = choose(recipes.filter((x) => !x.daily), slot, date, plan, basket, 0.35, current?.recipe_id, ingredientKeys, share);
   if (!r) return;
   const { [slot]: _, ...others } = daily;
   await save([{ date, slot, recipe_id: r.id, servings: servingsFor(r, slotBudgets(targets.calories, others)[slot]) }]);
@@ -239,14 +252,16 @@ export interface ShoppingItem {
   spoils: boolean;
 }
 
-export function shoppingList(meals: PlannedMeal[], tripStart: string): ShoppingItem[] {
+/** `others` adds the household's servings to each meal (lib/groceries.ts householdServings). */
+export function shoppingList(meals: PlannedMeal[], tripStart: string, others: (m: PlannedMeal) => number = () => 0): ShoppingItem[] {
   const map = new Map<string, ShoppingItem>();
   for (const m of meals) {
     const day = daysBetween(tripStart, m.date);
+    const servings = m.servings + others(m);
     for (const ing of JSON.parse(m.recipe.ingredients) as Ingredient[]) {
       const key = `${ing.item.toLowerCase()}|${ing.unit}`;
       const entry = map.get(key) ?? { key, item: ing.item, qty: 0, unit: ing.unit, aisle: ing.aisle, meals: [], firstDay: day, lastDay: day, spoils: false };
-      entry.qty += ing.qty * m.servings;
+      entry.qty += ing.qty * servings;
       entry.firstDay = Math.min(entry.firstDay, day);
       entry.lastDay = Math.max(entry.lastDay, day);
       if (!entry.meals.includes(m.recipe.name)) entry.meals.push(m.recipe.name);

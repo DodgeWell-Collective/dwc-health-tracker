@@ -5,6 +5,7 @@ import { addDays, formatDate } from "../../lib/dates";
 import { suggestedTargets, type GoalPace, type Measured } from "../../lib/nutrition";
 import { AutoSave, Button, Card, Info } from "../../components/ui";
 import { saveProfile } from "../actions";
+import { SLOTS } from "../../lib/types";
 import { authOff, MIN_PASSWORD } from "../../lib/auth";
 import { getSecret, setting } from "../../lib/secrets";
 import { changePassword, removeApiKey, saveApiKey } from "./account-actions";
@@ -142,6 +143,27 @@ function FoodTab({ p, today }: { p: P; today: string }) {
           <Field label="Next shopping day">
             <input name="shop_anchor" type="date" defaultValue={trip.start >= today ? trip.start : addDays(trip.start, trip.days)} />
           </Field>
+        </div>
+        <div className="grid grid-cols-[auto_1fr] items-end gap-3">
+          <Field label={<>Others eating<Info>Each gets a standard serving of the shared meals, added to the shopping list and the cooking amounts. Your own portion still follows your calorie targets.</Info></>}>
+            <select name="household" defaultValue={p.household}>
+              {[0, 1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n === 0 ? "Just me" : `+${n}`}</option>)}
+            </select>
+          </Field>
+          <div>
+            <input type="hidden" name="household_slots_present" value="1" />
+            <span className="mb-1 block text-sm text-zinc-600 dark:text-zinc-400">Shared meals</span>
+            <div className="flex flex-wrap gap-1.5">
+              {SLOTS.map((s) => (
+                <label key={s} className="cursor-pointer">
+                  <input type="checkbox" name="household_slots" value={s} defaultChecked={p.household_slots.split(",").includes(s)} className="peer sr-only" />
+                  <span className="inline-block rounded-full border border-zinc-300 px-3 py-1 text-sm capitalize text-zinc-600 peer-checked:border-emerald-600 peer-checked:bg-emerald-600 peer-checked:text-white peer-focus-visible:ring-2 peer-focus-visible:ring-emerald-500 dark:border-zinc-700 dark:text-zinc-300">
+                    {s}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
         </div>
         <Field label="Foods I avoid">
           <input name="avoid_foods" defaultValue={p.avoid_foods} placeholder="e.g. shrimp, mushrooms" />

@@ -14,8 +14,11 @@ async function makeDetector(): Promise<Detector> {
   return new BarcodeDetector({ formats: FORMATS as never }) as unknown as Detector;
 }
 
-/** Camera button that reads a product barcode and hands back its digits. */
-export function BarcodeScan({ onCode }: { onCode: (code: string) => void }) {
+/**
+ * Camera button that reads a product barcode and hands back its digits. With `continuous`,
+ * the camera stays open for one item after another (a grocery haul) and shows `status`.
+ */
+export function BarcodeScan({ onCode, continuous, status }: { onCode: (code: string) => void; continuous?: boolean; status?: string }) {
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string>();
   const video = useRef<HTMLVideoElement>(null);
@@ -31,13 +34,18 @@ export function BarcodeScan({ onCode }: { onCode: (code: string) => void }) {
         video.current!.srcObject = stream;
         await video.current!.play();
         const detector = await makeDetector();
+        // The same item held in view reads many times a second; take it once.
+        let last = { code: "", at: 0 };
         while (!stopped) {
-          const found = await detector.detect(video.current!).catch(() => []);
-          if (found[0]?.rawValue) {
+          const code = (await detector.detect(video.current!).catch(() => []))[0]?.rawValue;
+          if (code && !(code === last.code && Date.now() - last.at < 3000)) {
             navigator.vibrate?.(50);
-            onCode(found[0].rawValue);
-            setOpen(false);
-            return;
+            onCode(code);
+            if (!continuous) {
+              setOpen(false);
+              return;
+            }
+            last = { code, at: Date.now() };
           }
           await new Promise((r) => setTimeout(r, 200));
         }
@@ -50,7 +58,7 @@ export function BarcodeScan({ onCode }: { onCode: (code: string) => void }) {
       stopped = true;
       stream?.getTracks().forEach((t) => t.stop());
     };
-  }, [open, onCode]);
+  }, [open, onCode, continuous]);
 
   return (
     <>
@@ -63,7 +71,8 @@ export function BarcodeScan({ onCode }: { onCode: (code: string) => void }) {
       {open && (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 bg-black/90 p-4" onClick={() => setOpen(false)}>
           <video ref={video} playsInline muted className="w-full max-w-md rounded-lg" />
-          <p className="text-sm text-zinc-300">Point at the barcode · tap to cancel</p>
+          {status && <p className="text-sm font-medium text-emerald-400" role="status">{status}</p>}
+          <p className="text-sm text-zinc-300">{continuous ? "Scan items one after another · tap when done" : "Point at the barcode · tap to cancel"}</p>
         </div>
       )}
     </>

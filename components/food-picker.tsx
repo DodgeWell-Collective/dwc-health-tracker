@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useState, useTransition, type ReactNode } from "react";
 import { foodPortionsAction, searchFoodsAction } from "../app/actions";
-import { macrosFor, VOLUME_UNITS, WEIGHT_UNITS, type FoodHit, type Macros, type Portion } from "../lib/food-math";
+import { hitName, macrosFor, VOLUME_UNITS, WEIGHT_UNITS, type FoodHit, type Macros, type Portion } from "../lib/food-math";
 import { BarcodeScan } from "./barcode-scan";
 
 export const fieldCls = "rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900";
@@ -132,8 +132,7 @@ export function FoodPicker({ onAdd, addLabel = "Add", placeholder = "Search food
     if (grams <= 0) return;
     rememberPortion(hit.id, amount, unit);
     onAddLatest.current({
-      // Skip the brand when the name already says it ("Nutella (Nutella)").
-      name: hit.brand && !hit.name.toLowerCase().includes(hit.brand.toLowerCase()) ? `${hit.name} (${hit.brand})` : hit.name,
+      name: hitName(hit),
       amount,
       // "1 serving (1 scoop)" reads as "2 serving (1 scoop)" once multiplied.
       unit: unit.replace(/^1 /, ""),

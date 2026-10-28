@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getTargets, getToday, tripFor } from "../../lib/data";
 import { addDays, formatDate, isDate } from "../../lib/dates";
 import { getPlan, ingredientCount } from "../../lib/planner";
+import { householdServings } from "../../lib/groceries";
 import { SLOTS } from "../../lib/types";
 import { Button, Card, fmt, Hidden, Info } from "../../components/ui";
 import { generateTripAction, regenerateDay, swap } from "../actions";
@@ -94,6 +95,9 @@ export default async function Plan({ searchParams }: { searchParams: Promise<{ t
                             <p className="text-xs tabular-nums text-zinc-500">
                               {fmt(m.recipe.calories * m.servings)} kcal · {fmt(m.recipe.protein * m.servings)}P / {fmt(m.recipe.carbs * m.servings)}C / {fmt(m.recipe.fat * m.servings)}F
                             </p>
+                          )}
+                          {m && householdServings(profile, slot, !!m.recipe.daily) > 0 && (
+                            <p className="text-xs text-zinc-500">Cook {m.servings + householdServings(profile, slot, !!m.recipe.daily)} servings ({m.servings} yours)</p>
                           )}
                         </div>
                         <form action={swap} className="mt-2">

@@ -43,6 +43,10 @@ export interface Profile {
   shop_anchor: string | null;
   /** Comma-separated staples always on hand; left off the shopping list. */
   pantry: string;
+  /** Others eating the shared meals; each gets one standard serving. */
+  household: number;
+  /** Comma-separated slots the household shares. */
+  household_slots: string;
   profile_done: number;
   activity: "sedentary" | "light" | "moderate" | "active" | "very_active";
   calorie_target: number | null;

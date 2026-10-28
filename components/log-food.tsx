@@ -6,7 +6,7 @@ import { addDays, formatDate } from "../lib/dates";
 import { SLOTS, type Slot } from "../lib/types";
 import { ClaudeEstimate } from "./ask-claude";
 import { fieldCls, FoodPicker, type PickedFood } from "./food-picker";
-import type { FoodHit } from "../lib/food-math";
+import { hitName, type FoodHit } from "../lib/food-math";
 
 export interface QuickFood {
   name: string;
@@ -48,8 +48,6 @@ export interface QuickRecipe {
 /** Eaten this many times (in the last 180 days) to count as one of your usual foods. */
 const USUAL = 2;
 
-/** Name a scanned product is shown and logged under, e.g. "Greek Yogurt (Fage)". */
-const hitName = (h: FoodHit) => (h.brand && !h.name.toLowerCase().includes(h.brand.toLowerCase()) ? `${h.name} (${h.brand})` : h.name);
 
 /** What was eaten at a meal on its most recent earlier day. */
 export interface PreviousMeal {

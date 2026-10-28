@@ -111,6 +111,14 @@ const SCHEMA = [
     scans INTEGER NOT NULL DEFAULT 1,
     last_scanned TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
+  // Groceries bought (scanned or typed on the Shopping page). The planner favors recipes
+  // that use them, and the shopping list counts them as had (lib/groceries.ts).
+  `CREATE TABLE IF NOT EXISTS grocery (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    scanned_id TEXT,
+    added TEXT NOT NULL
+  )`,
   // VO2 max readings (ml/kg/min), from a watch or a field test.
   `CREATE TABLE IF NOT EXISTS vo2max (
     date TEXT PRIMARY KEY,
@@ -154,6 +162,9 @@ const ADDED_COLUMNS: Record<string, Record<string, string>> = {
     shop_anchor: "TEXT",
     // Comma-separated items always on hand; kept off the shopping list.
     pantry: "TEXT NOT NULL DEFAULT 'salt,black pepper,olive oil,cooking spray,water'",
+    // Others eating the shared meals (a standard serving each), and which meals those are.
+    household: "INTEGER NOT NULL DEFAULT 0",
+    household_slots: "TEXT NOT NULL DEFAULT 'dinner'",
     // Set once the profile has been saved (drives the setup checklist).
     profile_done: "INTEGER NOT NULL DEFAULT 0",
   },

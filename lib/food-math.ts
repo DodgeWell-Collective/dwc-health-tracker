@@ -31,6 +31,10 @@ export interface FoodHit {
   portions: Portion[];
 }
 
+/** Name a database food is shown and logged under: "Greek Yogurt (Fage)", but not "Nutella (Nutella)". */
+export const hitName = (h: Pick<FoodHit, "name" | "brand">) =>
+  h.brand && !h.name.toLowerCase().includes(h.brand.toLowerCase()) ? `${h.name} (${h.brand})` : h.name;
+
 export const AISLES: Aisle[] = ["produce", "meat & seafood", "dairy & eggs", "bakery", "pantry", "frozen"];
 
 const AISLE_WORDS: [Aisle, RegExp][] = [
