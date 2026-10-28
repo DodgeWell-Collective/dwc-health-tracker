@@ -53,7 +53,7 @@ npx wrangler secret put APP_PASSWORD --name dwc-health-tracker
 
 The first deploy creates the database and prints your URL (`dwc-health-tracker.<your-subdomain>.workers.dev`). The app stays locked until `APP_PASSWORD` is set.
 
-To use your own domain, an existing D1 database or a different Worker name, copy `cloudflare.local.example.json` to `cloudflare.local.json` and fill it in. Git ignores that file, so your details stay out of the repo. Set `"appAuth": "off"` only if Cloudflare Access already guards the domain.
+To use your own domain, an existing D1 database or a different Worker name, copy `cloudflare.local.example.json` to `cloudflare.local.json` and fill it in. Git ignores that file, so your details stay out of the repo. To sign in with [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/configure-apps/self-hosted-public-app/) instead of the app's password, protect the domain with an Access application, then set `"appAuth": "access"` and `"access": { "team": "<your team name>", "aud": "<the application's AUD tag>" }`. The app then checks the token Access signs on every request, so nothing that skips Access gets in.
 
 ### Option 3: Node
 
@@ -101,7 +101,7 @@ Only devices signed in to your Tailscale account can reach that address, and the
 | Name | Needed | What it does |
 | --- | --- | --- |
 | `APP_PASSWORD` | Yes | The first sign-in password. Once you set a new one in Settings, the Settings password is used instead. |
-| `APP_AUTH` | No | Set to `off` to skip sign-in, only when something else (a VPN, Cloudflare Access) guards the app. |
+| `APP_AUTH` | No | `access`: Cloudflare Access signs you in and the app verifies its token (set `ACCESS_TEAM` and `ACCESS_AUD` too). `off`: no sign-in at all, only when something else (a VPN, a private network) guards the app. |
 | `ANTHROPIC_API_KEY` | No | Turns on the Claude features. You can enter it in Settings instead. |
 | `USDA_API_KEY` | No | Free key from [api.data.gov](https://api.data.gov/signup). Without it, food search uses the rate-limited `DEMO_KEY`. You can enter it in Settings instead. |
 | `DATABASE_PATH` | No (Node only; Docker sets it) | SQLite file location. Default `data/health.sqlite`. |

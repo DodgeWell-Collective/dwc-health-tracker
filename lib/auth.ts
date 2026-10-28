@@ -2,13 +2,16 @@ import { getSecret, setSecret, setting } from "./secrets";
 
 // Single-user sign-in. The password is the one set in Settings (stored as a PBKDF2
 // hash) or, until then, APP_PASSWORD. With neither, the app stays locked unless
-// APP_AUTH=off says something else (such as Cloudflare Access) guards it.
+// APP_AUTH says something else guards it: "access" (Cloudflare Access, checked on every
+// request by lib/access.ts) or "off" (trusted without checking).
 // The session cookie is an HMAC of the current password under a random key kept in
 // the database, so changing the password signs every device out.
 export const SESSION_COOKIE = "session";
 export const MIN_PASSWORD = 8;
 
-export const authOff = () => setting("APP_AUTH") === "off";
+/** No app password: Cloudflare Access (or something else) does the sign-in. */
+export const authOff = () => ["off", "access"].includes(setting("APP_AUTH") ?? "");
+export const accessAuth = () => setting("APP_AUTH") === "access";
 
 const enc = new TextEncoder();
 const hex = (buf: ArrayBuffer | Uint8Array) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");

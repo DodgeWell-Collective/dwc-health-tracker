@@ -2,5 +2,6 @@
   "name": "dwc-health-tracker",
   "domains": ["health.example.com"],
   "databaseId": "00000000-0000-0000-0000-000000000000",
-  "appAuth": "off"
+  "appAuth": "access",
+  "access": { "team": "your-team-name", "aud": "the Access application's AUD tag" }
 }

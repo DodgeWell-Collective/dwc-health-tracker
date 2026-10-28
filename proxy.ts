@@ -1,10 +1,17 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { authOff, SESSION_COOKIE, validSession } from "./lib/auth";
+import { accessConfig, validAccessToken } from "./lib/access";
+import { accessAuth, authOff, SESSION_COOKIE, validSession } from "./lib/auth";
 
 // Everything needs a session except the sign-in page and the sign-in POST itself.
 // Checked per request, not by path pattern alone: server actions can be posted to any
 // page URL, so a public page must not accept them.
 export async function proxy(request: NextRequest) {
+  // Behind Cloudflare Access: only requests carrying its signed token for this app get in.
+  if (accessAuth()) {
+    const { team, aud } = accessConfig();
+    const ok = team && aud && (await validAccessToken(request.headers.get("cf-access-jwt-assertion"), team, aud));
+    return withHeaders(ok ? NextResponse.next() : new NextResponse("Forbidden", { status: 403 }));
+  }
   const { pathname } = request.nextUrl;
   const method = request.method;
   const open =
